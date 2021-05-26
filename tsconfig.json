@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "es6",
+    "lib": [
+      "esnext",
+      "dom"
+    ],
+    "strict": true,
+    "moduleResolution": "node",
+    "module": "es6",
+    "sourceMap": true,
+    "outDir": "public/dist",
+    "jsx": "react",
+    "experimentalDecorators": false,
+    "esModuleInterop": true,
+    "baseUrl": "."
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}
