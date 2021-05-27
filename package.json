@@ -7,18 +7,22 @@
     "clean": "rm -rf pkg && cargo clean",
     "clean:quick": "rm -rf pkg && cargo clean -p irondew_client -p irondew_common -p irondew_server",
     "serve": "node server.js",
-    "watch:ts": "tsc --watch",
+    "watch:ts": "esbuild ./src/index.ts --bundle --outfile=public/dist/index.js --watch",
     "watch:rust": "cargo watch -w ../server/src -w ../common/src -w src -s 'npm run build:rust:dev'",
     "build:rust:dev": "wasm-pack build --target web --dev -- --color always "
   },
   "devDependencies": {
     "@wasm-tool/wasm-pack-plugin": "^1.3.1",
     "concurrently": "6.0.2",
+    "esbuild": "^0.12.3",
     "html-webpack-plugin": "^4.5.0",
     "ts-loader": "^8.0.13",
     "typescript": "^4.1.3",
     "webpack": "^5.11.1",
     "webpack-cli": "^4.3.1",
     "webpack-dev-server": "^3.11.1"
+  },
+  "dependencies": {
+    "gl-matrix": "^3.3.0"
   }
 }

@@ -1,7 +1,10 @@
-export default function () {}
+import { render } from './render'
+
+export default function startup() {}
 
 export function start() {
   let canvas = createCanvas()
+  render(canvas.canvas)
 }
 
 function createCanvas() {
@@ -55,3 +58,5 @@ function createCanvas() {
   )
   return { area, canvas }
 }
+
+start()
