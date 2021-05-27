@@ -1,10 +1,12 @@
 import { render } from './render'
 
+export type WasmModule = typeof import('../crates/sorcery/pkg/sorcery')
+
 export default function startup() {}
 
-export function start() {
+export function start(wasm: WasmModule) {
   let canvas = createCanvas()
-  render(canvas.canvas)
+  render(wasm, canvas.canvas)
 }
 
 function createCanvas() {
@@ -58,5 +60,3 @@ function createCanvas() {
   )
   return { area, canvas }
 }
-
-start()
