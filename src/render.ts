@@ -104,9 +104,14 @@ void main (void) {
   gl.enableVertexAttribArray(triCornerAttrib)
   gl.enableVertexAttribArray(centerOffsetAttrib)
   gl.enableVertexAttribArray(velocityAttrib)
+
+  let sdf = wasm.calculate_sdf()
+  let sdfTexture = createDataTexture(gl, sdf)
+
   let state: State = {
     wasm,
     render: {
+      sdfTexture,
       firePosUni,
       viewUni,
       lifetimeAttrib,
@@ -395,6 +400,7 @@ interface State {
 interface GameState {}
 
 interface RenderState {
+  sdfTexture: WebGLBuffer
   shader: WebGLProgram
   viewUni: WebGLUniformLocation
   firePosUni: WebGLUniformLocation
@@ -413,9 +419,6 @@ interface RenderState {
 }
 
 function draw(state: State, gl: WebGLRenderingContext) {
-  let sdf = state.wasm.calculate_sdf()
-  console.log(sdf.length)
-
   let render = state.render
   // Once the image is loaded we'll start drawing our particle effect
   if (render.imageIsLoaded) {
@@ -455,4 +458,19 @@ function draw(state: State, gl: WebGLRenderingContext) {
 
   // On the next animation frame we re-draw our particle effect
   window.requestAnimationFrame(() => draw(state, gl))
+}
+
+function createDataTexture(
+  gl: WebGLRenderingContext,
+  data: Float32Array,
+): WebGLTexture {
+  var texture = gl.createTexture()
+  if (!texture) {
+    throw 'todo'
+  }
+  gl.bindTexture(gl.TEXTURE_2D, texture)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.FLOAT, data)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+  return texture
 }

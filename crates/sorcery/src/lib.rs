@@ -20,16 +20,19 @@ pub fn calculate_sdf() -> Result<Box<[f32]>, JsValue> {
         .subtract(sdfu::Box::new(Vec3::new(0.2, 2.0, 0.2)))
         .translate(Vec3::new(0.0, 0.0, -1.0));
 
-    let origin = Vec3::zero();
-    let marched = (0..16)
-        .flat_map(|x| (0..16).map(move |y| (x, y)))
-        .flat_map(|(x, y)| {
-            let direction = Vec3::new((x as f32 / 16.0), (y as f32 / 16.0), 1.0);
-            let color = ray_march(sdf, origin, direction);
-            color.as_array().to_vec()
-        })
-        .collect::<Vec<_>>();
-    Ok(marched.into_boxed_slice())
+    let voxels = encode(sdf);
+    Ok(voxels.into_boxed_slice())
+}
+
+fn encode<S>(sdf: S) -> Vec<f32>
+where
+    S: SDF<f32, Vec3>,
+{
+    (0..64)
+        .flat_map(|x| (0..64).map(move |y| (x, y)))
+        .flat_map(|(x, y)| (0..64).map(move |z| Vec3::new(x as f32, y as f32, z as f32)))
+        .map(|location| sdf.dist(location))
+        .collect()
 }
 
 fn ray_march<S>(sdf: S, ray_origin: Vec3, ray_direction: Vec3) -> Vec3
