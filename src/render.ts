@@ -1,4 +1,5 @@
 import { mat4, ReadonlyVec3, vec3, vec4 } from 'gl-matrix'
+import { initShaderProgram } from './glutil'
 import { WasmModule } from './index'
 
 interface Buffers {
@@ -18,73 +19,30 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
   // Vertex shader program
 
   let vsSource = `
-
-uniform vec3 uFirePos;
-
-attribute vec2 aTextureCoords;
-
-attribute vec2 aTriCorner;
-
-attribute vec3 aCenterOffset;
-
-uniform mat4 uPMatrix;
-uniform mat4 uViewMatrix;
-
-varying vec2 vTextureCoords;
-
-void main (void) {
-
-  vec4 position = vec4(
-    uFirePos + aCenterOffset,
-    1.0
-  );
-
-  float size = 0.05;
-
-  vec3 cameraRight = vec3(
-    uViewMatrix[0].x, uViewMatrix[1].x, uViewMatrix[2].x
-  );
-  vec3 cameraUp = vec3(
-    uViewMatrix[0].y, uViewMatrix[1].y, uViewMatrix[2].y
-  );
-
-  position.xyz += (cameraRight * aTriCorner.x * size) +
-    (cameraUp * aTriCorner.y * size);
-  
-  gl_Position = uPMatrix * uViewMatrix * position;
-
-  vTextureCoords = aTextureCoords;
-}
+  attribute vec4 aVertexPosition;
+   attribute vec4 aVertexColor;
+   uniform mat4 uModelViewMatrix;
+   uniform mat4 uProjectionMatrix;
+   varying lowp vec4 vColor;
+   void main(void) {
+     gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
+     vColor = aVertexColor;
+   }
   `
 
   // Fragment shader program
 
   let fsSource = `
    precision mediump float;
-
-varying vec2 vTextureCoords;
-
-uniform sampler2D fireAtlas;
-
-void main (void) {
-  vec4 texColor = texture2D(
-    fireAtlas, 
-    vec2(
-      (vTextureCoords.x / 2.0),
-      (vTextureCoords.y / 2.0)
-  ));
-  if(texColor.a < 0.1) {
-    discard;
-  }
-  gl_FragColor = texColor;
-
-}
+    void main(void) {
+      gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+    }
   `
 
   let shaderProgram = initShaderProgram(gl, vsSource, fsSource)
 
   if (!shaderProgram) {
-    throw 'todo'
+    throw 'todo create shader'
   }
 
   gl.useProgram(shaderProgram)
@@ -93,37 +51,64 @@ void main (void) {
   let perspectiveUni = gl.getUniformLocation(shaderProgram, 'uPMatrix')!
   let viewUni = gl.getUniformLocation(shaderProgram, 'uViewMatrix')!
   let fireAtlasUni = gl.getUniformLocation(shaderProgram, 'uFireAtlas')!
+  let sdfUni = gl.getUniformLocation(shaderProgram, 'uSdf')!
 
-  let lifetimeAttrib = gl.getAttribLocation(shaderProgram, 'aLifetime')
+  let projectionMatrix = gl.getUniformLocation(
+    shaderProgram,
+    'uProjectionMatrix',
+  )!
+  let modelViewMatrix = gl.getUniformLocation(
+    shaderProgram,
+    'uModelViewMatrix',
+  )!
+
   let texCoordAttrib = gl.getAttribLocation(shaderProgram, 'aTextureCoords')
   let triCornerAttrib = gl.getAttribLocation(shaderProgram, 'aTriCorner')
   let centerOffsetAttrib = gl.getAttribLocation(shaderProgram, 'aCenterOffset')
-  let velocityAttrib = gl.getAttribLocation(shaderProgram, 'aVelocity')
-  gl.enableVertexAttribArray(lifetimeAttrib)
-  gl.enableVertexAttribArray(texCoordAttrib)
-  gl.enableVertexAttribArray(triCornerAttrib)
-  gl.enableVertexAttribArray(centerOffsetAttrib)
-  gl.enableVertexAttribArray(velocityAttrib)
+  let vertexPositionAttrib = gl.getAttribLocation(
+    shaderProgram,
+    'aVertexPosition',
+  )
 
-  let sdf = wasm.calculate_sdf()
+  let posBuffer = initBuffers(gl)
+
+  {
+    let buffers = posBuffer
+    let numComponents = 2 // pull out 2 values per iteration
+    let type = gl.FLOAT // the data in the buffer is 32bit floats
+    let normalize = false // don't normalize
+    let stride = 0 // how many bytes to get from one set of values to the next
+    // 0 = use type and numComponents above
+    let offset = 0 // how many bytes inside the buffer to start from
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffers)
+    gl.vertexAttribPointer(
+      vertexPositionAttrib,
+      numComponents,
+      type,
+      normalize,
+      stride,
+      offset,
+    )
+    gl.enableVertexAttribArray(vertexPositionAttrib)
+  }
+
+  let sdf = wasm.march()
   let sdfTexture = createDataTexture(gl, sdf)
 
   let state: State = {
     wasm,
     render: {
+      sdfUni,
       sdfTexture,
-      firePosUni,
       viewUni,
-      lifetimeAttrib,
-      texCoordAttrib,
-      triCornerAttrib,
-      centerOffsetAttrib,
-      velocityAttrib,
+
+      projectionMatrix,
+      modelViewMatrix,
+      posBuffer,
+
       xRotation: 0,
       yRotation: 0,
       imageIsLoaded: false,
-      numParticles: 200,
-      redFirePos: [0.0, 0.0, 0.0],
       shader: shaderProgram,
       lastMouseX: 0,
       lastMouseY: 0,
@@ -156,81 +141,36 @@ void main (void) {
     fireAtlas.src = '/assets/rock.png'
   }
 
-  let triCornersCycle = [
-    // Bottom left corner of the square
-    -1.0, -1.0,
-    // Bottom right corner of the square
-    1.0, -1.0,
-    // Top right corner of the square
-    1.0, 1.0,
-    // Top left corner of the square
-    -1.0, 1.0,
-  ]
-  let texCoordsCycle = [
-    // Bottom left corner of the texture
-    0, 0,
-    // Bottom right corner of the texture
-    1, 0,
-    // Top right corner of the texture
-    1, 1,
-    // Top left corner of the texture
-    0, 1,
-  ]
+  // We set OpenGL's blend function so that we don't see the black background
+  // on our particle squares. Essentially, if there is anything behind the particle
+  // we show whatever is behind it plus the color of the particle.
+  //
+  // If the color of the particle is black then black is (0, 0, 0) so we only show
+  // whatever is behind it.
+  // So this works because our texture has a black background.
+  // There are many different blend functions that you can use, this one works for our
+  // purposes.
+  // gl.enable(gl.DEPTH_TEST)
+  // gl.depthFunc(gl.LESS)
+  gl.enable(gl.BLEND)
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
-  {
-    let { triCorners, centerOffsets, vertexIndices, texCoords } =
-      createVertexIndices(state.render.numParticles)
-    function createBuffer(
-      bufferType: 'ARRAY_BUFFER' | 'ELEMENT_ARRAY_BUFFER',
-      DataType: any,
-      data: any,
-    ) {
-      if (!gl) {
-        throw 'todo'
-      }
-      var buffer = gl.createBuffer()
-      gl.bindBuffer(gl[bufferType], buffer)
-      gl.bufferData(gl[bufferType], new DataType(data), gl.STATIC_DRAW)
-      return buffer
-    }
+  // Push our fire texture atlas to the GPU
+  gl.activeTexture(gl.TEXTURE0)
+  gl.bindTexture(gl.TEXTURE_2D, fireTexture)
+  gl.uniform1i(fireAtlasUni, 0)
 
-    createBuffer('ARRAY_BUFFER', Float32Array, texCoords)
-    gl.vertexAttribPointer(texCoordAttrib, 2, gl.FLOAT, false, 0, 0)
+  // sdf
+  gl.activeTexture(gl.TEXTURE1)
+  gl.bindTexture(gl.TEXTURE_2D, sdfTexture)
+  gl.uniform1i(sdfUni, 1)
 
-    createBuffer('ARRAY_BUFFER', Float32Array, triCorners)
-    gl.vertexAttribPointer(triCornerAttrib, 2, gl.FLOAT, false, 0, 0)
-
-    createBuffer('ARRAY_BUFFER', Float32Array, centerOffsets)
-    gl.vertexAttribPointer(centerOffsetAttrib, 3, gl.FLOAT, false, 0, 0)
-
-    createBuffer('ELEMENT_ARRAY_BUFFER', Uint16Array, vertexIndices)
-
-    // We set OpenGL's blend function so that we don't see the black background
-    // on our particle squares. Essentially, if there is anything behind the particle
-    // we show whatever is behind it plus the color of the particle.
-    //
-    // If the color of the particle is black then black is (0, 0, 0) so we only show
-    // whatever is behind it.
-    // So this works because our texture has a black background.
-    // There are many different blend functions that you can use, this one works for our
-    // purposes.
-    gl.enable(gl.DEPTH_TEST)
-    gl.depthFunc(gl.LESS)
-    gl.enable(gl.BLEND)
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-
-    // Push our fire texture atlas to the GPU
-    gl.activeTexture(gl.TEXTURE0)
-    gl.bindTexture(gl.TEXTURE_2D, fireTexture)
-    gl.uniform1i(fireAtlasUni, 0)
-
-    // Send our perspective matrix to the GPU
-    gl.uniformMatrix4fv(
-      perspectiveUni,
-      false,
-      mat4.perspective([] as any as mat4, Math.PI / 3, 1, 0.01, 1000),
-    )
-  }
+  // Send our perspective matrix to the GPU
+  gl.uniformMatrix4fv(
+    perspectiveUni,
+    false,
+    mat4.perspective([] as any as mat4, Math.PI / 3, 1.333, 0.01, 100),
+  )
 
   canvas.addEventListener('mousemove', (e) => {
     // if (isDragging) {
@@ -248,128 +188,33 @@ void main (void) {
   draw(state, gl)
 }
 
-//
-// Initialize a shader program, so WebGL knows how to draw our data
-//
-function initShaderProgram(
-  gl: WebGLRenderingContext,
-  vsSource: string,
-  fsSource: string,
-) {
-  let vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource)
-  let fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource)
+function initBuffers(gl: WebGLRenderingContext): WebGLBuffer {
+  // Create a buffer for the square's positions.
 
-  let shaderProgram = gl.createProgram()
-  if (!shaderProgram || !vertexShader || !fragmentShader) {
-    throw 'todo'
-  }
-  gl.attachShader(shaderProgram, vertexShader)
-  gl.attachShader(shaderProgram, fragmentShader)
-  gl.linkProgram(shaderProgram)
-
-  // If creating the shader program failed, alert
-
-  if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
-    alert(
-      'Unable to initialize the shader program: ' +
-        gl.getProgramInfoLog(shaderProgram),
-    )
-    return null
+  let positionBuffer = gl.createBuffer()
+  if (!positionBuffer) {
+    throw 'todo buffer'
   }
 
-  return shaderProgram
+  // Select the positionBuffer as the one to apply buffer
+  // operations to from here out.
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer)
+
+  // Now create an array of positions for the square.
+
+  let positions = [0, 1.0, 1.0, 1.0, 0, 0, 1.0, 0]
+
+  // Now pass the list of positions into WebGL to build the
+  // shape. We do this by creating a Float32Array from the
+  // JavaScript array, then use it to fill the current buffer.
+
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW)
+
+  return positionBuffer
 }
 
-//
-// creates a shader of the given type, uploads the source and
-// compiles it.
-//
-function loadShader(gl: WebGLRenderingContext, type: GLenum, source: string) {
-  let shader = gl.createShader(type)
-
-  if (!shader) {
-    throw 'todo'
-  }
-
-  // Send the source to the shader object
-
-  gl.shaderSource(shader, source)
-
-  // Compile the shader program
-
-  gl.compileShader(shader)
-
-  // See if it compiled successfully
-
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    alert(
-      'An error occurred compiling the shaders: ' + gl.getShaderInfoLog(shader),
-    )
-    gl.deleteShader(shader)
-    return null
-  }
-
-  return shader
-}
-
-function createVertexIndices(numParticles: number) {
-  let triCorners = []
-  let texCoords = []
-  let vertexIndices: number[][] = []
-  let centerOffsets = []
-  let velocities = []
-
-  let triCornersCycle = [-1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0]
-  let texCoordsCycle = [0, 0, 1, 0, 1, 1, 0, 1]
-
-  for (let i = 0; i < numParticles; i++) {
-    let diameterAroundCenter = 2.0
-    let halfDiameterAroundCenter = diameterAroundCenter / 2
-
-    let xStartOffset =
-      diameterAroundCenter * Math.random() - halfDiameterAroundCenter
-    xStartOffset /= 3
-
-    let yStartOffset =
-      diameterAroundCenter * Math.random() - halfDiameterAroundCenter
-    yStartOffset /= 10
-
-    let zStartOffset =
-      diameterAroundCenter * Math.random() - halfDiameterAroundCenter
-    zStartOffset /= 3
-
-    for (let j = 0; j < 4; j++) {
-      triCorners.push(triCornersCycle[j * 2])
-      triCorners.push(triCornersCycle[j * 2 + 1])
-
-      texCoords.push(texCoordsCycle[j * 2])
-      texCoords.push(texCoordsCycle[j * 2 + 1])
-
-      centerOffsets.push(xStartOffset)
-      centerOffsets.push(yStartOffset + Math.abs(xStartOffset / 2.0))
-      centerOffsets.push(zStartOffset)
-    }
-
-    vertexIndices = vertexIndices.concat(
-      [0, 1, 2, 0, 2, 3].map(function (num) {
-        return num + 4 * i
-      }),
-    )
-  }
-
-  return {
-    texCoords,
-    vertexIndices,
-    centerOffsets,
-    triCorners,
-  }
-}
-
-function createCameraUniform(
-  xRotation: number,
-  yRotation: number,
-  redFirePos: ReadonlyVec3,
-) {
+function createCameraUniform(xRotation: number, yRotation: number) {
   var camera = mat4.create()
 
   // Start our camera off at a height of 0.25 and 1 unit
@@ -387,7 +232,7 @@ function createCameraUniform(
 
   // Make our camera look at the first red fire
   var cameraPos: ReadonlyVec3 = [camera[12], camera[13], camera[14]]
-  mat4.lookAt(camera, cameraPos, redFirePos, [0, 1, 0])
+  mat4.lookAt(camera, cameraPos, [0, 0, 0], [0, 1, 0])
 
   return camera
 }
@@ -402,24 +247,31 @@ interface GameState {}
 interface RenderState {
   sdfTexture: WebGLBuffer
   shader: WebGLProgram
+  posBuffer: WebGLBuffer
   viewUni: WebGLUniformLocation
-  firePosUni: WebGLUniformLocation
-  lifetimeAttrib: number
-  texCoordAttrib: number
-  triCornerAttrib: number
-  centerOffsetAttrib: number
-  velocityAttrib: number
-  redFirePos: vec3
+  sdfUni: WebGLUniformLocation
+  projectionMatrix: WebGLUniformLocation
+  modelViewMatrix: WebGLUniformLocation
+  imageIsLoaded: boolean
   xRotation: number
   yRotation: number
-  imageIsLoaded: boolean
-  numParticles: number
   lastMouseX: number
   lastMouseY: number
 }
 
 function draw(state: State, gl: WebGLRenderingContext) {
   let render = state.render
+
+  // {
+  //   let xSpeed = 0
+  //   let ySpeed = 0.4
+  //   state.render.xRotation += xSpeed / 50
+  //   state.render.yRotation -= ySpeed / 50
+
+  //   state.render.xRotation = Math.min(state.render.xRotation, Math.PI / 2.5)
+  //   state.render.xRotation = Math.max(state.render.xRotation, -Math.PI / 2.5)
+  // }
+
   // Once the image is loaded we'll start drawing our particle effect
   if (render.imageIsLoaded) {
     // Clear our color buffer and depth buffer so that
@@ -430,30 +282,33 @@ function draw(state: State, gl: WebGLRenderingContext) {
     gl.useProgram(render.shader)
 
     // Pass our world view matrix into our vertex shader
-    gl.uniformMatrix4fv(
-      render.viewUni,
-      false,
-      createCameraUniform(
-        render.xRotation,
-        render.yRotation,
-        render.redFirePos,
-      ),
-    )
+    // gl.uniformMatrix4fv(
+    //   render.viewUni,
+    //   false,
+    //   createCameraUniform(render.xRotation, render.yRotation),
+    // )
 
-    // We pass information specific to our first flame into our vertex shader
-    // and then draw our first flame.
-    gl.uniform3fv(render.firePosUni, render.redFirePos)
-    // What does numParticles * 6 mean?
-    //  For each particle there are two triangles drawn (to form the square)
-    //  The first triangle has 3 vertices and the second triangle has 3 vertices
-    //  making for a total of 6 vertices per particle.
-    gl.drawElements(gl.TRIANGLES, render.numParticles * 6, gl.UNSIGNED_SHORT, 0)
+    let fieldOfView = (45 * Math.PI) / 180 // in radians
+    // let aspect = gl.canvas.clientWidth / gl.canvas.clientHeight
+    let aspect = 1.3
+    let zNear = 0.1
+    let zFar = 100.0
+    let projectionMatrix = mat4.create()
 
-    // We pass information specific to our second flame into our vertex shader
-    // and then draw our second flame.
-    // gl.uniform3fv(render.firePosUni, render.purpFirePos)
-    // gl.uniform4fv(render.colorUni, purpFireColor)
-    // gl.drawElements(gl.TRIANGLES, numParticles * 6, gl.UNSIGNED_SHORT, 0)
+    // note: glmatrix.js always has the first argument
+    // as the destination to receive the result.
+    mat4.perspective(projectionMatrix, fieldOfView, aspect, zNear, zFar)
+
+    let modelViewMatrix = mat4.create()
+
+    mat4.translate(modelViewMatrix, modelViewMatrix, [-0.5, -0.5, -0.1])
+
+    gl.uniformMatrix4fv(render.projectionMatrix, false, projectionMatrix)
+    gl.uniformMatrix4fv(render.modelViewMatrix, false, modelViewMatrix)
+
+    let offset = 0
+    let vertexCount = 4
+    gl.drawArrays(gl.TRIANGLE_STRIP, offset, vertexCount)
   }
 
   // On the next animation frame we re-draw our particle effect
@@ -464,13 +319,21 @@ function createDataTexture(
   gl: WebGLRenderingContext,
   data: Float32Array,
 ): WebGLTexture {
+  var ext = gl.getExtension('OES_texture_float')
+
   var texture = gl.createTexture()
   if (!texture) {
-    throw 'todo'
+    throw 'todo create data'
   }
   gl.bindTexture(gl.TEXTURE_2D, texture)
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.FLOAT, data)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
   return texture
+}
+
+function aperture<T>(n: number, arr: T[]): T[][] {
+  return n > arr.length
+    ? []
+    : arr.slice(n - 1).map((v, i) => arr.slice(i, i + n))
 }
