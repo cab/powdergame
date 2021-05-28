@@ -16,17 +16,17 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
     return
   }
 
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height)
+
   // Vertex shader program
 
   let vsSource = `
   attribute vec4 aVertexPosition;
-   attribute vec4 aVertexColor;
-   uniform mat4 uModelViewMatrix;
-   uniform mat4 uProjectionMatrix;
+   attribute vec2 aUv;
+   
    varying lowp vec4 vColor;
    void main(void) {
-     gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
-     vColor = aVertexColor;
+     gl_Position = aVertexPosition - 0.5;
    }
   `
 
@@ -34,9 +34,82 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
 
   let fsSource = `
    precision mediump float;
-    void main(void) {
-      gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+   
+
+float distance_from_sphere(in vec3 p, in vec3 c, float r)
+{
+    return length(p - c) - r;
+}
+
+float map_the_world(in vec3 p)
+{
+    float sphere_0 = distance_from_sphere(p, vec3(0.0), 1.0);
+
+    return sphere_0;
+}
+
+vec3 calculate_normal(in vec3 p)
+{
+    const vec3 small_step = vec3(0.001, 0.0, 0.0);
+
+    float gradient_x = map_the_world(p + small_step.xyy) - map_the_world(p - small_step.xyy);
+    float gradient_y = map_the_world(p + small_step.yxy) - map_the_world(p - small_step.yxy);
+    float gradient_z = map_the_world(p + small_step.yyx) - map_the_world(p - small_step.yyx);
+
+    vec3 normal = vec3(gradient_x, gradient_y, gradient_z);
+
+    return normalize(normal);
+}
+
+vec3 ray_march(in vec3 ro, in vec3 rd)
+{
+    float total_distance_traveled = 0.0;
+    const int NUMBER_OF_STEPS = 32;
+    const float MINIMUM_HIT_DISTANCE = 0.001;
+    const float MAXIMUM_TRACE_DISTANCE = 1000.0;
+
+    for (int i = 0; i < NUMBER_OF_STEPS; ++i)
+    {
+        vec3 current_position = ro + total_distance_traveled * rd;
+
+        float distance_to_closest = map_the_world(current_position);
+
+        if (distance_to_closest < MINIMUM_HIT_DISTANCE) 
+        {
+            vec3 normal = calculate_normal(current_position);
+            vec3 light_position = vec3(2.0, -5.0, 3.0);
+            vec3 direction_to_light = normalize(current_position - light_position);
+
+            float diffuse_intensity = max(0.0, dot(normal, direction_to_light));
+
+            return vec3(1.0, 0.0, 0.0) * diffuse_intensity;
+        }
+
+        if (total_distance_traveled > MAXIMUM_TRACE_DISTANCE)
+        {
+            break;
+        }
+        total_distance_traveled += distance_to_closest;
     }
+    return vec3(0.0);
+}
+
+
+void main()
+{
+    // TODO use actual canvas size
+    vec2 vUv = vec2(gl_FragCoord.x / 1770.0, gl_FragCoord.y / 1330.0);
+    vec2 uv = vUv * 2.0 - 1.0;
+
+    vec3 camera_position = vec3(0.0, 0.0, -5.0);
+    vec3 ro = camera_position;
+    vec3 rd = vec3(uv, 1.0);
+
+    vec3 shaded_color = ray_march(ro, rd);
+
+    gl_FragColor = vec4(shaded_color, 1.0);
+
+}
   `
 
   let shaderProgram = initShaderProgram(gl, vsSource, fsSource)
@@ -47,9 +120,6 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
 
   gl.useProgram(shaderProgram)
 
-  let firePosUni = gl.getUniformLocation(shaderProgram, 'uFirePos')!
-  let perspectiveUni = gl.getUniformLocation(shaderProgram, 'uPMatrix')!
-  let viewUni = gl.getUniformLocation(shaderProgram, 'uViewMatrix')!
   let fireAtlasUni = gl.getUniformLocation(shaderProgram, 'uFireAtlas')!
   let sdfUni = gl.getUniformLocation(shaderProgram, 'uSdf')!
 
@@ -62,35 +132,14 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
     'uModelViewMatrix',
   )!
 
-  let texCoordAttrib = gl.getAttribLocation(shaderProgram, 'aTextureCoords')
-  let triCornerAttrib = gl.getAttribLocation(shaderProgram, 'aTriCorner')
-  let centerOffsetAttrib = gl.getAttribLocation(shaderProgram, 'aCenterOffset')
   let vertexPositionAttrib = gl.getAttribLocation(
     shaderProgram,
     'aVertexPosition',
   )
+  let uvAttrib = gl.getAttribLocation(shaderProgram, 'aUv')
 
   let posBuffer = initBuffers(gl)
-
-  {
-    let buffers = posBuffer
-    let numComponents = 2 // pull out 2 values per iteration
-    let type = gl.FLOAT // the data in the buffer is 32bit floats
-    let normalize = false // don't normalize
-    let stride = 0 // how many bytes to get from one set of values to the next
-    // 0 = use type and numComponents above
-    let offset = 0 // how many bytes inside the buffer to start from
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffers)
-    gl.vertexAttribPointer(
-      vertexPositionAttrib,
-      numComponents,
-      type,
-      normalize,
-      stride,
-      offset,
-    )
-    gl.enableVertexAttribArray(vertexPositionAttrib)
-  }
+  let uvBuffer = initUvBuffer(gl)
 
   let sdf = wasm.march()
   let sdfTexture = createDataTexture(gl, sdf)
@@ -100,12 +149,11 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
     render: {
       sdfUni,
       sdfTexture,
-      viewUni,
-
-      projectionMatrix,
-      modelViewMatrix,
+      uvAttrib,
+      vertexPositionAttrib,
       posBuffer,
 
+      uvBuffer,
       xRotation: 0,
       yRotation: 0,
       imageIsLoaded: false,
@@ -141,17 +189,6 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
     fireAtlas.src = '/assets/rock.png'
   }
 
-  // We set OpenGL's blend function so that we don't see the black background
-  // on our particle squares. Essentially, if there is anything behind the particle
-  // we show whatever is behind it plus the color of the particle.
-  //
-  // If the color of the particle is black then black is (0, 0, 0) so we only show
-  // whatever is behind it.
-  // So this works because our texture has a black background.
-  // There are many different blend functions that you can use, this one works for our
-  // purposes.
-  // gl.enable(gl.DEPTH_TEST)
-  // gl.depthFunc(gl.LESS)
   gl.enable(gl.BLEND)
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
@@ -164,13 +201,6 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
   gl.activeTexture(gl.TEXTURE1)
   gl.bindTexture(gl.TEXTURE_2D, sdfTexture)
   gl.uniform1i(sdfUni, 1)
-
-  // Send our perspective matrix to the GPU
-  gl.uniformMatrix4fv(
-    perspectiveUni,
-    false,
-    mat4.perspective([] as any as mat4, Math.PI / 3, 1.333, 0.01, 100),
-  )
 
   canvas.addEventListener('mousemove', (e) => {
     // if (isDragging) {
@@ -188,6 +218,33 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
   draw(state, gl)
 }
 
+function initUvBuffer(gl: WebGLRenderingContext): WebGLBuffer {
+  let textureCoordBuffer = gl.createBuffer()
+  if (!textureCoordBuffer) {
+    throw 'todo uv buffer'
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, textureCoordBuffer)
+
+  let textureCoordinates: number[] = []
+
+  let width = 256
+  let height = 256
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) {
+      textureCoordinates.push(x / width)
+      textureCoordinates.push(y / height)
+    }
+  }
+
+  gl.bufferData(
+    gl.ARRAY_BUFFER,
+    new Float32Array(textureCoordinates),
+    gl.STATIC_DRAW,
+  )
+
+  return textureCoordBuffer
+}
+
 function initBuffers(gl: WebGLRenderingContext): WebGLBuffer {
   // Create a buffer for the square's positions.
 
@@ -196,18 +253,18 @@ function initBuffers(gl: WebGLRenderingContext): WebGLBuffer {
     throw 'todo buffer'
   }
 
-  // Select the positionBuffer as the one to apply buffer
-  // operations to from here out.
-
   gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer)
 
-  // Now create an array of positions for the square.
+  let x = 0
+  let y = 0
+  let width = 1
+  let height = 1
+  let x1 = x
+  let x2 = x + width
+  let y1 = y
+  let y2 = y + height
 
-  let positions = [0, 1.0, 1.0, 1.0, 0, 0, 1.0, 0]
-
-  // Now pass the list of positions into WebGL to build the
-  // shape. We do this by creating a Float32Array from the
-  // JavaScript array, then use it to fill the current buffer.
+  let positions = [x1, y1, x2, y1, x1, y2, x1, y2, x2, y1, x2, y2]
 
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW)
 
@@ -248,10 +305,10 @@ interface RenderState {
   sdfTexture: WebGLBuffer
   shader: WebGLProgram
   posBuffer: WebGLBuffer
-  viewUni: WebGLUniformLocation
+  uvBuffer: WebGLBuffer
+  uvAttrib: number
+  vertexPositionAttrib: number
   sdfUni: WebGLUniformLocation
-  projectionMatrix: WebGLUniformLocation
-  modelViewMatrix: WebGLUniformLocation
   imageIsLoaded: boolean
   xRotation: number
   yRotation: number
@@ -262,53 +319,34 @@ interface RenderState {
 function draw(state: State, gl: WebGLRenderingContext) {
   let render = state.render
 
-  // {
-  //   let xSpeed = 0
-  //   let ySpeed = 0.4
-  //   state.render.xRotation += xSpeed / 50
-  //   state.render.yRotation -= ySpeed / 50
-
-  //   state.render.xRotation = Math.min(state.render.xRotation, Math.PI / 2.5)
-  //   state.render.xRotation = Math.max(state.render.xRotation, -Math.PI / 2.5)
-  // }
-
-  // Once the image is loaded we'll start drawing our particle effect
   if (render.imageIsLoaded) {
-    // Clear our color buffer and depth buffer so that
-    // nothing is left over in our drawing buffer now that we're
-    // completely redrawing the entire canvas
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
     gl.useProgram(render.shader)
 
-    // Pass our world view matrix into our vertex shader
-    // gl.uniformMatrix4fv(
-    //   render.viewUni,
-    //   false,
-    //   createCameraUniform(render.xRotation, render.yRotation),
-    // )
-
-    let fieldOfView = (45 * Math.PI) / 180 // in radians
-    // let aspect = gl.canvas.clientWidth / gl.canvas.clientHeight
-    let aspect = 1.3
-    let zNear = 0.1
-    let zFar = 100.0
-    let projectionMatrix = mat4.create()
-
-    // note: glmatrix.js always has the first argument
-    // as the destination to receive the result.
-    mat4.perspective(projectionMatrix, fieldOfView, aspect, zNear, zFar)
-
-    let modelViewMatrix = mat4.create()
-
-    mat4.translate(modelViewMatrix, modelViewMatrix, [-0.5, -0.5, -0.1])
-
-    gl.uniformMatrix4fv(render.projectionMatrix, false, projectionMatrix)
-    gl.uniformMatrix4fv(render.modelViewMatrix, false, modelViewMatrix)
+    {
+      let buffers = render.posBuffer
+      let numComponents = 2 // pull out 2 values per iteration
+      let type = gl.FLOAT // the data in the buffer is 32bit floats
+      let normalize = false // don't normalize
+      let stride = 0 // how many bytes to get from one set of values to the next
+      // 0 = use type and numComponents above
+      let offset = 0 // how many bytes inside the buffer to start from
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffers)
+      gl.vertexAttribPointer(
+        render.vertexPositionAttrib,
+        numComponents,
+        type,
+        normalize,
+        stride,
+        offset,
+      )
+      gl.enableVertexAttribArray(render.vertexPositionAttrib)
+    }
 
     let offset = 0
-    let vertexCount = 4
-    gl.drawArrays(gl.TRIANGLE_STRIP, offset, vertexCount)
+    let vertexCount = 6
+    gl.drawArrays(gl.TRIANGLES, offset, vertexCount)
   }
 
   // On the next animation frame we re-draw our particle effect
@@ -330,10 +368,4 @@ function createDataTexture(
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
   return texture
-}
-
-function aperture<T>(n: number, arr: T[]): T[][] {
-  return n > arr.length
-    ? []
-    : arr.slice(n - 1).map((v, i) => arr.slice(i, i + n))
 }
