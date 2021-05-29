@@ -23,21 +23,7 @@ pub fn wasm_main() -> Result<(), wasm_bindgen::JsValue> {
 
 #[wasm_bindgen]
 pub fn create_sdf() -> Result<Box<[f32]>, JsValue> {
-    let sdf = sdfu::Sphere::new(0.45)
-        .subtract(sdfu::Box::new(Vec3::new(0.25, 0.25, 1.5)))
-        .union_smooth(
-            sdfu::Sphere::new(0.3).translate(Vec3::new(0.3, 0.3, 0.0)),
-            0.1,
-        )
-        .union_smooth(
-            sdfu::Sphere::new(0.3).translate(Vec3::new(-0.3, 0.3, 0.0)),
-            0.1,
-        )
-        .subtract(sdfu::Box::new(Vec3::new(0.125, 0.125, 1.5)).translate(Vec3::new(-0.3, 0.3, 0.0)))
-        .subtract(sdfu::Box::new(Vec3::new(0.125, 0.125, 1.5)).translate(Vec3::new(0.3, 0.3, 0.0)))
-        .subtract(sdfu::Box::new(Vec3::new(1.5, 0.1, 0.1)).translate(Vec3::new(0.0, 0.3, 0.0)))
-        .subtract(sdfu::Box::new(Vec3::new(0.2, 2.0, 0.2)))
-        .translate(Vec3::new(0.0, 0.0, -1.0));
+    let sdf = sdfu::Sphere::new(0.45).translate(Vec3::new(0.0, 0.0, 1.0));
 
     let distances = encode(sdf);
     Ok(distances.into_boxed_slice())
@@ -47,7 +33,7 @@ fn encode<S>(sdf: S) -> Vec<f32>
 where
     S: SDF<f32, Vec3>,
 {
-    let size = 128;
+    let size = 32;
     let depth = 32;
     (0..depth)
         .flat_map(|z| {

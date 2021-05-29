@@ -5,12 +5,11 @@
     "test": "wasm-pack test --node",
     "start": "concurrently 'npm run serve' 'npm run watch:ts' 'npm run watch:rust'",
     "clean": "rm -rf pkg && cargo clean",
-    "clean:quick": "rm -rf pkg && cargo clean -p irondew_client -p irondew_common -p irondew_server",
     "serve": "node server.js",
     "watch:ts:old": "esbuild ./src/index.ts --bundle --outfile=public/dist/index.js --watch",
     "watch:ts": "node esbuild.js",
     "watch:rust": "cargo watch -w crates -s 'npm run build:rust:dev'",
-    "build:rust:dev": "wasm-pack build ./crates/sorcery --target web --dev -- --color always "
+    "build:rust:dev": "wasm-pack build ./crates/game --target web --dev -- --color always "
   },
   "devDependencies": {
     "@wasm-tool/wasm-pack-plugin": "^1.3.1",

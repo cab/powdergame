@@ -2,13 +2,11 @@ import { mat4, ReadonlyVec3, vec3, vec4 } from 'gl-matrix'
 import { initShaderProgram } from './glutil'
 import { WasmModule } from './index'
 
-interface Buffers {
-  position: WebGLBuffer
-  color: WebGLBuffer
-}
+let fsSource = require('./frag.glsl')
+let vsSource = require('./vert.glsl')
 
 export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
-  let gl = canvas.getContext('webgl')
+  let gl = canvas.getContext('webgl2')
   if (!gl) {
     alert(
       'Unable to initialize WebGL. Your browser or machine may not support it.',
@@ -20,98 +18,6 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
 
   // Vertex shader program
 
-  let vsSource = `
-  attribute vec4 aVertexPosition;
-   attribute vec2 aUv;
-   
-   varying lowp vec4 vColor;
-   void main(void) {
-     gl_Position = aVertexPosition - 0.5;
-   }
-  `
-
-  // Fragment shader program
-
-  let fsSource = `
-   precision mediump float;
-   
-
-float distance_from_sphere(in vec3 p, in vec3 c, float r)
-{
-    return length(p - c) - r;
-}
-
-float map_the_world(in vec3 p)
-{
-    float sphere_0 = distance_from_sphere(p, vec3(0.0), 1.0);
-
-    return sphere_0;
-}
-
-vec3 calculate_normal(in vec3 p)
-{
-    const vec3 small_step = vec3(0.001, 0.0, 0.0);
-
-    float gradient_x = map_the_world(p + small_step.xyy) - map_the_world(p - small_step.xyy);
-    float gradient_y = map_the_world(p + small_step.yxy) - map_the_world(p - small_step.yxy);
-    float gradient_z = map_the_world(p + small_step.yyx) - map_the_world(p - small_step.yyx);
-
-    vec3 normal = vec3(gradient_x, gradient_y, gradient_z);
-
-    return normalize(normal);
-}
-
-vec3 ray_march(in vec3 ro, in vec3 rd)
-{
-    float total_distance_traveled = 0.0;
-    const int NUMBER_OF_STEPS = 32;
-    const float MINIMUM_HIT_DISTANCE = 0.001;
-    const float MAXIMUM_TRACE_DISTANCE = 1000.0;
-
-    for (int i = 0; i < NUMBER_OF_STEPS; ++i)
-    {
-        vec3 current_position = ro + total_distance_traveled * rd;
-
-        float distance_to_closest = map_the_world(current_position);
-
-        if (distance_to_closest < MINIMUM_HIT_DISTANCE) 
-        {
-            vec3 normal = calculate_normal(current_position);
-            vec3 light_position = vec3(2.0, -5.0, 3.0);
-            vec3 direction_to_light = normalize(current_position - light_position);
-
-            float diffuse_intensity = max(0.0, dot(normal, direction_to_light));
-
-            return vec3(1.0, 0.0, 0.0) * diffuse_intensity;
-        }
-
-        if (total_distance_traveled > MAXIMUM_TRACE_DISTANCE)
-        {
-            break;
-        }
-        total_distance_traveled += distance_to_closest;
-    }
-    return vec3(0.0);
-}
-
-
-void main()
-{
-    // TODO use actual canvas size
-    vec2 vUv = vec2(gl_FragCoord.x / 1770.0, gl_FragCoord.y / 1330.0);
-    vec2 uv = vUv * 2.0 - 1.0;
-
-    vec3 camera_position = vec3(0.0, 0.0, -5.0);
-    vec3 ro = camera_position;
-    vec3 rd = vec3(uv, 1.0);
-
-    vec3 shaded_color = ray_march(ro, rd);
-
-    gl_FragColor = vec4(shaded_color, 1.0);
-
-}
-  `
-
   let shaderProgram = initShaderProgram(gl, vsSource, fsSource)
 
   if (!shaderProgram) {
@@ -120,16 +26,17 @@ void main()
 
   gl.useProgram(shaderProgram)
 
-  let fireAtlasUni = gl.getUniformLocation(shaderProgram, 'uFireAtlas')!
+  let samplerUni = gl.getUniformLocation(shaderProgram, 'u_sampler')!
   let sdfUni = gl.getUniformLocation(shaderProgram, 'uSdf')!
 
-  let projectionMatrix = gl.getUniformLocation(
+  let cameraPosition = gl.getUniformLocation(
     shaderProgram,
-    'uProjectionMatrix',
+    'u_camera_position',
   )!
-  let modelViewMatrix = gl.getUniformLocation(
+
+  let cameraDirection = gl.getUniformLocation(
     shaderProgram,
-    'uModelViewMatrix',
+    'u_camera_direction',
   )!
 
   let vertexPositionAttrib = gl.getAttribLocation(
@@ -141,8 +48,54 @@ void main()
   let posBuffer = initBuffers(gl)
   let uvBuffer = initUvBuffer(gl)
 
-  let sdf = wasm.march()
+  let sdf = wasm.create_sdf()
   let sdfTexture = createDataTexture(gl, sdf)
+
+  let fireTexture = gl.createTexture()
+  if (!fireTexture) {
+    throw 'todo fix tex'
+  }
+
+  {
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, fireTexture)
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      1,
+      1,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      new Uint8Array([0, 0, 255, 255]),
+    )
+
+    var fireAtlas = new window.Image()
+    fireAtlas.addEventListener('load', function () {
+      if (!gl) {
+        alert('failed to load texture in context')
+        return
+      }
+      gl.activeTexture(gl.TEXTURE0)
+      // gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+      gl.bindTexture(gl.TEXTURE_2D, fireTexture)
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        fireAtlas,
+      )
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+      state.render.imageIsLoaded = true
+    })
+    fireAtlas.src = '/assets/rock2.png'
+  }
 
   let state: State = {
     wasm,
@@ -151,8 +104,12 @@ void main()
       sdfTexture,
       uvAttrib,
       vertexPositionAttrib,
+      cameraPosition,
+      cameraDirection,
       posBuffer,
+      samplerUni,
 
+      fireTexture,
       uvBuffer,
       xRotation: 0,
       yRotation: 0,
@@ -163,44 +120,13 @@ void main()
     },
   }
 
-  {
-    var fireTexture = gl.createTexture()
-    var fireAtlas = new window.Image()
-    fireAtlas.onload = function () {
-      if (!gl) {
-        alert('failed to load texture in context')
-        return
-      }
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
-      gl.bindTexture(gl.TEXTURE_2D, fireTexture)
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.RGBA,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        fireAtlas,
-      )
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-      // todo event
-      state.render.imageIsLoaded = true
-    }
-    fireAtlas.src = '/assets/rock.png'
-  }
-
   gl.enable(gl.BLEND)
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
-  // Push our fire texture atlas to the GPU
-  gl.activeTexture(gl.TEXTURE0)
-  gl.bindTexture(gl.TEXTURE_2D, fireTexture)
-  gl.uniform1i(fireAtlasUni, 0)
-
   // sdf
-  gl.activeTexture(gl.TEXTURE1)
-  gl.bindTexture(gl.TEXTURE_2D, sdfTexture)
-  gl.uniform1i(sdfUni, 1)
+  // gl.activeTexture(gl.TEXTURE1)
+  // gl.bindTexture(gl.TEXTURE_2D, sdfTexture)
+  // gl.uniform1i(sdfUni, 1)
 
   canvas.addEventListener('mousemove', (e) => {
     // if (isDragging) {
@@ -218,7 +144,7 @@ void main()
   draw(state, gl)
 }
 
-function initUvBuffer(gl: WebGLRenderingContext): WebGLBuffer {
+function initUvBuffer(gl: WebGL2RenderingContext): WebGLBuffer {
   let textureCoordBuffer = gl.createBuffer()
   if (!textureCoordBuffer) {
     throw 'todo uv buffer'
@@ -245,7 +171,7 @@ function initUvBuffer(gl: WebGLRenderingContext): WebGLBuffer {
   return textureCoordBuffer
 }
 
-function initBuffers(gl: WebGLRenderingContext): WebGLBuffer {
+function initBuffers(gl: WebGL2RenderingContext): WebGLBuffer {
   // Create a buffer for the square's positions.
 
   let positionBuffer = gl.createBuffer()
@@ -271,7 +197,7 @@ function initBuffers(gl: WebGLRenderingContext): WebGLBuffer {
   return positionBuffer
 }
 
-function createCameraUniform(xRotation: number, yRotation: number) {
+function createCameraUniform(xRotation: number, yRotation: number): mat4 {
   var camera = mat4.create()
 
   // Start our camera off at a height of 0.25 and 1 unit
@@ -306,9 +232,13 @@ interface RenderState {
   shader: WebGLProgram
   posBuffer: WebGLBuffer
   uvBuffer: WebGLBuffer
+  samplerUni: WebGLUniformLocation
   uvAttrib: number
   vertexPositionAttrib: number
   sdfUni: WebGLUniformLocation
+  fireTexture: WebGLTexture
+  cameraPosition: WebGLUniformLocation
+  cameraDirection: WebGLUniformLocation
   imageIsLoaded: boolean
   xRotation: number
   yRotation: number
@@ -316,7 +246,9 @@ interface RenderState {
   lastMouseY: number
 }
 
-function draw(state: State, gl: WebGLRenderingContext) {
+let xp = -20.0
+
+function draw(state: State, gl: WebGL2RenderingContext) {
   let render = state.render
 
   if (render.imageIsLoaded) {
@@ -344,6 +276,20 @@ function draw(state: State, gl: WebGLRenderingContext) {
       gl.enableVertexAttribArray(render.vertexPositionAttrib)
     }
 
+    {
+      gl.uniform1i(render.samplerUni, 0)
+      // Tell WebGL we want to affect texture unit 0
+      gl.activeTexture(gl.TEXTURE0)
+
+      // Bind the texture to texture unit 0
+      gl.bindTexture(gl.TEXTURE_2D, render.fireTexture)
+
+      // Tell the shader we bound the texture to texture unit 0
+    }
+
+    gl.uniform3fv(render.cameraPosition, [0, 0, -6])
+    gl.uniform3fv(render.cameraDirection, [0, 0, 1.0])
+
     let offset = 0
     let vertexCount = 6
     gl.drawArrays(gl.TRIANGLES, offset, vertexCount)
@@ -354,7 +300,7 @@ function draw(state: State, gl: WebGLRenderingContext) {
 }
 
 function createDataTexture(
-  gl: WebGLRenderingContext,
+  gl: WebGL2RenderingContext,
   data: Float32Array,
 ): WebGLTexture {
   var ext = gl.getExtension('OES_texture_float')

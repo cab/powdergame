@@ -62,6 +62,9 @@ require('esbuild')
     watch: true,
     outfile: 'public/dist/index.js',
     format: 'esm',
+    loader: {
+      '.glsl': 'text',
+    },
     // plugins: [wasmPlugin],
   })
   .catch(() => process.exit(1))

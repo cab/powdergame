@@ -1,6 +1,6 @@
 import { render } from './render'
 
-export type WasmModule = typeof import('../crates/sorcery/pkg/sorcery')
+export type WasmModule = typeof import('../crates/game/pkg/game')
 
 export default function startup() {}
 
@@ -19,10 +19,10 @@ function createCanvas() {
   )
   document.body.appendChild(container)
   let { width: maxWidth, height: maxHeight } = container.getBoundingClientRect()
-  maxWidth = Math.min(maxWidth, 1024)
-  maxHeight = Math.min(maxHeight, 768)
   let ratioWidth = 1024
   let ratioHeight = 768
+  maxWidth = Math.min(maxWidth, ratioWidth)
+  maxHeight = Math.min(maxHeight, ratioHeight)
 
   let ratio = maxWidth / ratioWidth
   if (ratioHeight * ratio > maxHeight) {

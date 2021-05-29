@@ -1,5 +1,5 @@
 [package]
-name = "sorcery"
+name = "game"
 version = "0.1.0"
 authors = ["conner bryan <conner@bryanthorpe.com>"]
 edition = "2018"
