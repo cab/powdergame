@@ -74,14 +74,17 @@ dependencies = [
 name = "game"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "chrono",
  "console_error_panic_hook",
- "sdfu",
+ "js-sys",
+ "thiserror",
  "tracing",
  "tracing-subscriber",
  "tracing-wasm",
  "ultraviolet",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -219,13 +222,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sdfu"
-version = "0.3.1-alpha.0"
-dependencies = [
- "ultraviolet",
-]
-
-[[package]]
 name = "serde"
 version = "1.0.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -266,6 +262,26 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-xid",
+]
+
+[[package]]
+name = "thiserror"
+version = "1.0.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa6f76457f59514c7eeb4e59d891395fab0b2fd1d40723ae737d64153392e9c6"
+dependencies = [
+ "thiserror-impl",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a36768c0fbf1bb15eca10defa29526bda730a2376c2ab4393ccfa16fb1a318d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -449,6 +465,16 @@ name = "wasm-bindgen-shared"
 version = "0.2.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7cff876b8f18eed75a66cf49b65e7f967cb354a7aa16003fb55dbfd25b44b4f"
+
+[[package]]
+name = "web-sys"
+version = "0.3.51"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e828417b379f3df7111d3a2a9e5753706cae29c41f7c4029ee9fd77f3e09e582"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "wide"

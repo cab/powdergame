@@ -1,15 +1,4 @@
-import { render } from './render'
-
-export type WasmModule = typeof import('../crates/game/pkg/game')
-
-export default function startup() {}
-
-export function start(wasm: WasmModule) {
-  let canvas = createCanvas()
-  render(wasm, canvas.canvas)
-}
-
-function createCanvas() {
+export function createCanvas() {
   document.body.setAttribute('style', 'padding:0;margin:0;overflow:hidden;')
 
   let container = document.createElement('div')
@@ -47,6 +36,7 @@ function createCanvas() {
     'webglcontextlost',
     (event) => {
       console.error('CONTEXT LOST')
+      alert('context lost. handling not implemented. please refresh')
     },
     false,
   )
