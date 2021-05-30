@@ -1,12 +1,9 @@
 [package]
-name = "game"
+name = "game_common"
 version = "0.1.0"
 authors = ["conner bryan <conner@bryanthorpe.com>"]
 edition = "2018"
 
-
-[lib]
-crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 bytemuck = "^1.5"

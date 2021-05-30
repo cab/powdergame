@@ -42,6 +42,9 @@ pub fn start_internal(mut canvas: web_sys::HtmlCanvasElement) -> Result<(), Erro
     debug!("creating renderer");
     let renderer = render::Renderer::new(&mut canvas)?;
 
+    debug!("setting up ecs");
+    let world = bevy_ecs::world::World::new();
+
     let event_loop = EventLoop::new();
     let window = {
         use winit::platform::web::WindowBuilderExtWebSys;
@@ -57,7 +60,7 @@ pub fn start_internal(mut canvas: web_sys::HtmlCanvasElement) -> Result<(), Erro
     };
 
     event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Wait;
+        *control_flow = ControlFlow::Poll;
 
         match event {
             Event::WindowEvent {
