@@ -4,6 +4,7 @@ uniform vec3 u_camera_position;
 uniform vec3 u_camera_direction;
 
 uniform sampler2D u_sampler;
+uniform sampler2D u_sdf;
 
 float distance_from_sphere(in vec3 p, in vec3 c, float r) {
     return length(p - c) - r;
@@ -94,5 +95,4 @@ void main() {
     vec3 shaded_color = ray_march(ro, rd);
 
     gl_FragColor = vec4(shaded_color, 1.0);
-
 }

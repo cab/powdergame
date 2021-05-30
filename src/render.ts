@@ -27,7 +27,7 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
   gl.useProgram(shaderProgram)
 
   let samplerUni = gl.getUniformLocation(shaderProgram, 'u_sampler')!
-  let sdfUni = gl.getUniformLocation(shaderProgram, 'uSdf')!
+  let sdfUni = gl.getUniformLocation(shaderProgram, 'u_sdf')!
 
   let cameraPosition = gl.getUniformLocation(
     shaderProgram,
@@ -43,10 +43,8 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
     shaderProgram,
     'aVertexPosition',
   )
-  let uvAttrib = gl.getAttribLocation(shaderProgram, 'aUv')
 
   let posBuffer = initBuffers(gl)
-  let uvBuffer = initUvBuffer(gl)
 
   let sdf = wasm.create_sdf()
   let sdfTexture = createDataTexture(gl, sdf)
@@ -71,7 +69,7 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
       new Uint8Array([0, 0, 255, 255]),
     )
 
-    var fireAtlas = new window.Image()
+    let fireAtlas = new window.Image()
     fireAtlas.addEventListener('load', function () {
       if (!gl) {
         alert('failed to load texture in context')
@@ -102,7 +100,6 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
     render: {
       sdfUni,
       sdfTexture,
-      uvAttrib,
       vertexPositionAttrib,
       cameraPosition,
       cameraDirection,
@@ -110,7 +107,6 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
       samplerUni,
 
       fireTexture,
-      uvBuffer,
       xRotation: 0,
       yRotation: 0,
       imageIsLoaded: false,
@@ -144,33 +140,6 @@ export function render(wasm: WasmModule, canvas: HTMLCanvasElement) {
   draw(state, gl)
 }
 
-function initUvBuffer(gl: WebGL2RenderingContext): WebGLBuffer {
-  let textureCoordBuffer = gl.createBuffer()
-  if (!textureCoordBuffer) {
-    throw 'todo uv buffer'
-  }
-  gl.bindBuffer(gl.ARRAY_BUFFER, textureCoordBuffer)
-
-  let textureCoordinates: number[] = []
-
-  let width = 256
-  let height = 256
-  for (let x = 0; x < width; x++) {
-    for (let y = 0; y < height; y++) {
-      textureCoordinates.push(x / width)
-      textureCoordinates.push(y / height)
-    }
-  }
-
-  gl.bufferData(
-    gl.ARRAY_BUFFER,
-    new Float32Array(textureCoordinates),
-    gl.STATIC_DRAW,
-  )
-
-  return textureCoordBuffer
-}
-
 function initBuffers(gl: WebGL2RenderingContext): WebGLBuffer {
   // Create a buffer for the square's positions.
 
@@ -198,7 +167,7 @@ function initBuffers(gl: WebGL2RenderingContext): WebGLBuffer {
 }
 
 function createCameraUniform(xRotation: number, yRotation: number): mat4 {
-  var camera = mat4.create()
+  let camera = mat4.create()
 
   // Start our camera off at a height of 0.25 and 1 unit
   // away from the origin
@@ -206,15 +175,15 @@ function createCameraUniform(xRotation: number, yRotation: number): mat4 {
 
   // Rotate our camera around the y and x axis of the world
   // as the viewer clicks or drags their finger
-  var xAxisRotation = mat4.create()
-  var yAxisRotation = mat4.create()
+  let xAxisRotation = mat4.create()
+  let yAxisRotation = mat4.create()
   mat4.rotateX(xAxisRotation, xAxisRotation, -xRotation)
   mat4.rotateY(yAxisRotation, yAxisRotation, yRotation)
   mat4.multiply(camera, xAxisRotation, camera)
   mat4.multiply(camera, yAxisRotation, camera)
 
   // Make our camera look at the first red fire
-  var cameraPos: ReadonlyVec3 = [camera[12], camera[13], camera[14]]
+  let cameraPos: ReadonlyVec3 = [camera[12], camera[13], camera[14]]
   mat4.lookAt(camera, cameraPos, [0, 0, 0], [0, 1, 0])
 
   return camera
@@ -231,9 +200,7 @@ interface RenderState {
   sdfTexture: WebGLBuffer
   shader: WebGLProgram
   posBuffer: WebGLBuffer
-  uvBuffer: WebGLBuffer
   samplerUni: WebGLUniformLocation
-  uvAttrib: number
   vertexPositionAttrib: number
   sdfUni: WebGLUniformLocation
   fireTexture: WebGLTexture
@@ -245,8 +212,6 @@ interface RenderState {
   lastMouseX: number
   lastMouseY: number
 }
-
-let xp = -20.0
 
 function draw(state: State, gl: WebGL2RenderingContext) {
   let render = state.render
@@ -303,14 +268,12 @@ function createDataTexture(
   gl: WebGL2RenderingContext,
   data: Float32Array,
 ): WebGLTexture {
-  var ext = gl.getExtension('OES_texture_float')
-
-  var texture = gl.createTexture()
+  let texture = gl.createTexture()
   if (!texture) {
     throw 'todo create data'
   }
   gl.bindTexture(gl.TEXTURE_2D, texture)
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.FLOAT, data)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB16F, 1, 1, 0, gl.RGB, gl.FLOAT, data)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
   return texture

@@ -24,7 +24,6 @@ pub fn wasm_main() -> Result<(), wasm_bindgen::JsValue> {
 #[wasm_bindgen]
 pub fn create_sdf() -> Result<Box<[f32]>, JsValue> {
     let sdf = sdfu::Sphere::new(0.45).translate(Vec3::new(0.0, 0.0, 1.0));
-
     let distances = encode(sdf);
     Ok(distances.into_boxed_slice())
 }
