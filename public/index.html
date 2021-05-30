@@ -9,7 +9,15 @@
       async function run() {
         await init();
         let { canvas } = createCanvas()
-        start(canvas)
+        try {
+          start(canvas)
+        } catch (e) {
+          if (e.message.includes("Using exceptions for control flow, don't mind me. This isn't actually an error!")) {
+            // winit uses this for control flow, no need to report
+          } else {
+            throw e;
+          }
+        }
       }
 
       run()

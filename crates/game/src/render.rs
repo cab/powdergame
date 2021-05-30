@@ -21,14 +21,13 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub struct Renderer {
-    canvas: HtmlCanvasElement,
     context: Rc<WebGl2RenderingContext>,
     pixel_pass: PixelPass,
     sprite_pass: SpritePass,
 }
 
 impl Renderer {
-    pub fn new(canvas: HtmlCanvasElement) -> Result<Self> {
+    pub fn new(canvas: &mut HtmlCanvasElement) -> Result<Self> {
         let context = Rc::new(
             canvas
                 .get_context("webgl2")
@@ -39,7 +38,6 @@ impl Renderer {
         let pixel_pass = PixelPass::new(Rc::clone(&context));
         let sprite_pass = SpritePass::new(Rc::clone(&context));
         Ok(Self {
-            canvas,
             context,
             sprite_pass,
             pixel_pass,
