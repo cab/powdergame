@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use clap::{App, Arg};
+use game_common::ClientPacket;
 use hyper::{
     header::{self, HeaderValue},
     server::conn::AddrStream,
@@ -8,7 +9,7 @@ use hyper::{
     Body, Method, Response, Server, StatusCode,
 };
 use tracing::{debug, info, trace, warn};
-use webrtc_unreliable::Server as RtcServer;
+use webrtc_unreliable::{MessageType, Server as RtcServer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -148,13 +149,19 @@ impl GameServer {
                 .expect("HTTP session server has died");
         });
 
-        let mut message_buf = Vec::new();
         loop {
             let received = match self.rtc.recv().await {
                 Ok(received) => {
-                    message_buf.clear();
-                    message_buf.extend(received.message.as_ref());
-                    Some((received.message_type, received.remote_addr))
+                    if received.message_type != MessageType::Binary {
+                        unimplemented!("bad message");
+                    }
+                    if let Some(packet) = ClientPacket::decode(received.message.as_ref()) {
+                        debug!("received {:?} from {:?}", received.remote_addr, packet);
+                        Some((received.remote_addr, packet))
+                    } else {
+                        // invalid packet
+                        None
+                    }
                 }
                 Err(err) => {
                     warn!("could not receive RTC message: {:?}", err);
@@ -162,15 +169,15 @@ impl GameServer {
                 }
             };
 
-            if let Some((message_type, remote_addr)) = received {
-                if let Err(err) = self
-                    .rtc
-                    .send(&message_buf, message_type, &remote_addr)
-                    .await
-                {
-                    warn!("could not send message to {}: {:?}", remote_addr, err);
-                }
-            }
+            // if let Some((remote_addr, packet)) = received {
+            //     if let Err(err) = self
+            //         .rtc
+            //         .send(&message_buf, message_type, &remote_addr)
+            //         .await
+            //     {
+            //         warn!("could not send message to {}: {:?}", remote_addr, err);
+            //     }
+            // }
         }
     }
 }

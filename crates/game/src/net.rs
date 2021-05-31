@@ -1,10 +1,14 @@
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use crossbeam_channel::Receiver;
 use crossbeam_channel::Sender;
+use game_common::ClientPacket;
 use gloo_events::EventListener;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tracing::{debug, warn};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
@@ -55,6 +59,7 @@ pub struct Client {
     on_ice_connection_state_change: EventListener,
     message_tx: mpsc::UnboundedSender<()>,
     message_rx: mpsc::UnboundedReceiver<()>,
+    ready_rx: Option<oneshot::Receiver<()>>,
 }
 
 impl Client {
@@ -74,10 +79,10 @@ impl Client {
             EventListener::new(&peer, "iceconnectionstatechange", {
                 let peer = peer.clone();
                 move |e| {
-                    debug!("ice state change {:?}", e);
-                    debug!("ok {:?}", peer.ice_connection_state());
+                    debug!("ice state change: {:?}", peer.ice_connection_state());
                 }
             });
+        let (ready_tx, ready_rx) = oneshot::channel::<()>();
         let mut channel_init = RtcDataChannelInit::new();
         channel_init.ordered(false);
         channel_init.max_retransmits(0);
@@ -87,15 +92,19 @@ impl Client {
         let on_error = EventListener::new(&channel, "error", move |e| {
             warn!("channel error {:?}", e);
         });
-        let on_open = EventListener::new(&channel, "open", move |e| {
-            debug!("channel opened");
+        let on_open = EventListener::once(&channel, "open", {
+            move |e| {
+                debug!("data channel opened");
+                ready_tx.send(());
+            }
         });
         let on_ice_candidate = EventListener::new(&peer, "icecandidate", move |e| {
-            debug!("ice candidate {:?}", e);
+            debug!("ice candidate event");
         });
 
         let (message_tx, message_rx) = mpsc::unbounded_channel();
         Self {
+            ready_rx: Some(ready_rx),
             peer,
             channel,
             http_client,
@@ -111,6 +120,13 @@ impl Client {
     pub async fn recv(&mut self) -> Option<()> {
         self.message_rx.recv().await
     }
+
+    pub fn send(&self, packet: &ClientPacket) {
+        debug!("sending {:?}", packet);
+        self.channel.send_with_u8_array(&packet.encode()).unwrap();
+    }
+
+    fn send_now(&self, packet: &ClientPacket) {}
 
     pub async fn connect(&mut self) -> Result<()> {
         debug!("creating peer offer");
@@ -154,7 +170,7 @@ impl Client {
         )
         .await
         .unwrap();
-        debug!("peer ready");
+        self.ready_rx.take().unwrap().await;
         Ok(())
     }
 }

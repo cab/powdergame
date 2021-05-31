@@ -2,6 +2,7 @@ mod net;
 mod render;
 mod world;
 
+use game_common::ClientPacket;
 use tracing::{debug, trace, warn};
 use wasm_bindgen::prelude::*;
 use winit::{
@@ -48,6 +49,9 @@ pub fn start_internal(mut canvas: web_sys::HtmlCanvasElement) -> Result<(), Erro
 
     wasm_bindgen_futures::spawn_local(async move {
         client.connect().await.unwrap();
+        client.send(&ClientPacket::SetName {
+            name: "conner".to_string(),
+        });
         for message in client.recv().await {
             debug!("got message {:?}", message);
         }
