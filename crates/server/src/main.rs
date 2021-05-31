@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer())
-            .with(tracing_subscriber::EnvFilter::try_new("debug").expect("todo")),
+            .with(tracing_subscriber::EnvFilter::try_new("game_server=debug").expect("todo")),
     )
     .unwrap();
 
@@ -80,6 +80,16 @@ enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
+trait CorsExt {
+    fn with_cors_headers(self) -> Self;
+}
+
+impl CorsExt for hyper::http::response::Builder {
+    fn with_cors_headers(mut self) -> Self {
+        self.header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+    }
+}
+
 impl GameServer {
     pub async fn new(listen_addr: SocketAddr, public_addr: SocketAddr) -> Result<Self> {
         debug!(
@@ -99,7 +109,11 @@ impl GameServer {
                 Ok::<_, Error>(service_fn(move |req| {
                     let mut session_endpoint = session_endpoint.clone();
                     async move {
-                        if req.uri().path() == "/new_rtc_session" && req.method() == Method::POST {
+                        if req.method() == Method::OPTIONS {
+                            debug!("options");
+                            Response::builder().with_cors_headers().body(Body::empty())
+                        } else if req.uri().path() == "/new_session" && req.method() == Method::POST
+                        {
                             info!("WebRTC session request from {}", remote_addr);
                             match session_endpoint.http_session_request(req.into_body()).await {
                                 Ok(mut resp) => {

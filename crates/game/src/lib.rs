@@ -1,3 +1,4 @@
+mod net;
 mod render;
 mod world;
 
@@ -41,6 +42,16 @@ pub fn start(canvas: web_sys::HtmlCanvasElement) {
 pub fn start_internal(mut canvas: web_sys::HtmlCanvasElement) -> Result<(), Error> {
     debug!("creating renderer");
     let renderer = render::Renderer::new(&mut canvas)?;
+
+    debug!("setting up networking");
+    let mut client = net::Client::new();
+
+    wasm_bindgen_futures::spawn_local(async move {
+        client.connect().await.unwrap();
+        for message in client.recv().await {
+            debug!("got message {:?}", message);
+        }
+    });
 
     debug!("setting up ecs");
     let world = bevy_ecs::world::World::new();
