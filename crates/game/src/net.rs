@@ -55,6 +55,7 @@ pub struct Client {
     channel: RtcDataChannel,
     on_error: EventListener,
     on_open: EventListener,
+    on_message: EventListener,
     on_ice_candidate: EventListener,
     on_ice_connection_state_change: EventListener,
     message_tx: mpsc::UnboundedSender<()>,
@@ -98,6 +99,11 @@ impl Client {
                 ready_tx.send(());
             }
         });
+        let on_message = EventListener::new(&channel, "message", {
+            move |e| {
+                debug!("got message");
+            }
+        });
         let on_ice_candidate = EventListener::new(&peer, "icecandidate", move |e| {
             debug!("ice candidate event");
         });
@@ -111,6 +117,7 @@ impl Client {
             on_error,
             on_open,
             on_ice_candidate,
+            on_message,
             on_ice_connection_state_change,
             message_rx,
             message_tx,

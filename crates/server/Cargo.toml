@@ -17,3 +17,5 @@ webrtc-unreliable = "0.5.1"
 anyhow = "^1.0"
 clap = "2.32"
 hyper = { version = "^0.14", features = ["server", "http1", "runtime", "stream"] }
+futures = { version = "^0.3" }
+crossbeam-channel = "0.5.0"

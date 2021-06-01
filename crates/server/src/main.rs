@@ -1,15 +1,18 @@
-use std::net::SocketAddr;
+mod net;
+mod world;
 
-use clap::{App, Arg};
-use game_common::ClientPacket;
-use hyper::{
-    header::{self, HeaderValue},
-    server::conn::AddrStream,
-    service::{make_service_fn, service_fn},
-    Body, Method, Response, Server, StatusCode,
+use crate::{
+    net::{ClientId, GameServer},
+    world::WorldPlugin,
 };
+
+use bevy_ecs::prelude::*;
+use clap::Arg;
+use crossbeam_channel::{Receiver, Sender};
+use game_common::{app::App, world::Tick, ClientPacket, ServerPacket};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tracing::{debug, info, trace, warn};
-use webrtc_unreliable::{MessageType, Server as RtcServer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -21,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .unwrap();
 
-    let matches = App::new("echo_server")
+    let matches = clap::App::new("echo_server")
         .arg(
             Arg::with_name("data")
                 .long("data")
@@ -63,121 +66,84 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .expect("could not parse HTTP address/port");
 
-    debug!("starting");
-    let mut server = GameServer::new(webrtc_listen_addr, public_webrtc_addr).await?;
-    server.listen(session_listen_addr).await;
+    let mut server = GameServer::new();
+
+    let (server_broadcast_tx, server_tx, server_rx) = server.channels().unwrap();
+
+    let gameloop = tokio::spawn(async move {
+        let mut app = setup_ecs(server_broadcast_tx, server_tx, server_rx);
+
+        debug!("starting game loop");
+        tick(move || {
+            app.update();
+        })
+        .await;
+    });
+
+    let server: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
+        debug!("starting server");
+        server
+            .listen(webrtc_listen_addr, public_webrtc_addr, session_listen_addr)
+            .await;
+        Ok(())
+    });
+
+    tokio::select! {
+        _ = server => {
+            info!("httpserver stopped");
+        }
+        _ = gameloop => {
+            info!("game loop stopped");
+        }
+    }
+
     Ok(())
 }
 
-struct GameServer {
-    rtc: RtcServer,
-}
+async fn tick<U>(mut update: U)
+where
+    U: FnMut(),
+{
+    let delta = std::time::Duration::from_millis(16);
+    let max_update_delta = delta * 10;
+    let mut current_time = std::time::Instant::now();
+    let mut accumulator = std::time::Duration::new(0, 0);
+    loop {
+        let new_time = std::time::Instant::now();
+        let frame_duration = new_time.duration_since(current_time);
+        current_time = new_time;
 
-#[derive(Debug, thiserror::Error)]
-enum Error {
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-}
+        accumulator += frame_duration;
 
-type Result<T> = std::result::Result<T, Error>;
-
-trait CorsExt {
-    fn with_cors_headers(self) -> Self;
-}
-
-impl CorsExt for hyper::http::response::Builder {
-    fn with_cors_headers(mut self) -> Self {
-        self.header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-    }
-}
-
-impl GameServer {
-    pub async fn new(listen_addr: SocketAddr, public_addr: SocketAddr) -> Result<Self> {
-        debug!(
-            "creating server, listening on {:?} and advertised on {:?}",
-            listen_addr, public_addr
-        );
-        let rtc = RtcServer::new(listen_addr, public_addr).await?;
-        Ok(Self { rtc })
-    }
-
-    pub async fn listen(&mut self, session_listen_addr: SocketAddr) {
-        let session_endpoint = self.rtc.session_endpoint();
-        let make_svc = make_service_fn(move |addr_stream: &AddrStream| {
-            let session_endpoint = session_endpoint.clone();
-            let remote_addr = addr_stream.remote_addr();
-            async move {
-                Ok::<_, Error>(service_fn(move |req| {
-                    let mut session_endpoint = session_endpoint.clone();
-                    async move {
-                        if req.method() == Method::OPTIONS {
-                            debug!("options");
-                            Response::builder().with_cors_headers().body(Body::empty())
-                        } else if req.uri().path() == "/new_session" && req.method() == Method::POST
-                        {
-                            info!("WebRTC session request from {}", remote_addr);
-                            match session_endpoint.http_session_request(req.into_body()).await {
-                                Ok(mut resp) => {
-                                    resp.headers_mut().insert(
-                                        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                                        HeaderValue::from_static("*"),
-                                    );
-                                    Ok(resp.map(Body::from))
-                                }
-                                Err(err) => {
-                                    warn!("bad rtc session request: {:?}", err);
-                                    Response::builder()
-                                        .status(StatusCode::BAD_REQUEST)
-                                        .body(Body::from(format!("error: {:?}", err)))
-                                }
-                            }
-                        } else {
-                            Response::builder()
-                                .status(StatusCode::NOT_FOUND)
-                                .body(Body::from("not found"))
-                        }
-                    }
-                }))
+        while accumulator >= delta {
+            update();
+            accumulator -= delta;
+            if accumulator >= max_update_delta {
+                accumulator = max_update_delta;
             }
-        });
-
-        tokio::spawn(async move {
-            debug!("listening to http on {:?}", session_listen_addr);
-            Server::bind(&session_listen_addr)
-                .serve(make_svc)
-                .await
-                .expect("HTTP session server has died");
-        });
-
-        loop {
-            let received = match self.rtc.recv().await {
-                Ok(received) => {
-                    if received.message_type != MessageType::Binary {
-                        unimplemented!("bad message");
-                    }
-                    if let Some(packet) = ClientPacket::decode(received.message.as_ref()) {
-                        debug!("received {:?} from {:?}", received.remote_addr, packet);
-                        Some((received.remote_addr, packet))
-                    } else {
-                        // invalid packet
-                        None
-                    }
-                }
-                Err(err) => {
-                    warn!("could not receive RTC message: {:?}", err);
-                    None
-                }
-            };
-
-            // if let Some((remote_addr, packet)) = received {
-            //     if let Err(err) = self
-            //         .rtc
-            //         .send(&message_buf, message_type, &remote_addr)
-            //         .await
-            //     {
-            //         warn!("could not send message to {}: {:?}", remote_addr, err);
-            //     }
-            // }
         }
+        tokio::task::yield_now().await;
+        tokio::time::sleep(delta).await; // TODO keep this for dev?
     }
+}
+
+fn setup_ecs(
+    server_broadcast_tx: mpsc::UnboundedSender<ServerPacket>,
+    server_tx: mpsc::UnboundedSender<(ClientId, ServerPacket)>,
+    server_rx: mpsc::UnboundedReceiver<(ClientId, ClientPacket)>,
+) -> App {
+    debug!("setting up ecs");
+    App::builder()
+        .insert_resource(Tick::zero())
+        .insert_resource(server_broadcast_tx)
+        .insert_resource(server_tx)
+        .insert_resource(server_rx)
+        .add_plugin(WorldPlugin)
+        .add_system(update_tick.system())
+        .build()
+}
+
+fn update_tick(mut tick: ResMut<Tick>) {
+    trace!("server tick");
+    tick.increment_self();
 }
