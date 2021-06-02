@@ -161,43 +161,50 @@ impl GameServer {
         let rtc = RwLock::new(rtc);
         let addr_to_client_id = Arc::new(Mutex::new(HashMap::<SocketAddr, ClientId>::new()));
 
-        tokio::spawn({
-            let server_event_tx = server_event_tx.clone();
-            let addr_to_client_id = addr_to_client_id.clone();
-            async move {
-                loop {
-                    let mut rtc = rtc.write().await;
-                    let recv = rtc.recv().await;
-                    if let Ok(received) = recv {
-                        if received.message_type != MessageType::Binary {
-                            unimplemented!("bad message");
-                        }
-                        debug!("received message from {:?}", received.remote_addr);
-                        if let Some(client_id) =
-                            addr_to_client_id.lock().unwrap().get(&received.remote_addr)
-                        {
-                            if let Some(packet) = ClientPacket::decode(received.message.as_ref()) {
-                                debug!("received {:?} from {:?}", packet, received.remote_addr);
-                                server_event_tx.send(ServerEvent::Message(*client_id, packet));
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        loop {}
 
-        while let Some(event) = server_event_rx.recv().await {
-            match event {
-                ServerEvent::AddClient(client_id, remote_addr) => {
-                    debug!("adding client {:?} @ {:?}", client_id, remote_addr);
-                    addr_to_client_id
-                        .lock()
-                        .unwrap()
-                        .insert(remote_addr, client_id);
-                }
-                ServerEvent::Message(client_id, packet) => {}
-            }
-        }
+        // tokio::spawn({
+        //     let server_event_tx = server_event_tx.clone();
+        //     let addr_to_client_id = addr_to_client_id.clone();
+        //     async move {
+        //         loop {
+        //             let recv = {
+        //                 let mut rtc = rtc.write().await;
+        //                 if let Ok(recv) = rtc.recv().await {
+        //                     if let Some(packet) = ClientPacket::decode(recv.message.as_ref()) {
+        //                         Some((recv.remote_addr, packet))
+        //                     } else {
+        //                         None
+        //                     }
+        //                 } else {
+        //                     None
+        //                 }
+        //             };
+        //             if let Some((addr, packet)) = recv {
+        //                 if let Some(client_id) = addr_to_client_id.lock().unwrap().get(&addr) {
+        //                     server_event_tx.send(ServerEvent::Message(*client_id, packet));
+        //                 } else {
+        //                     match packet {
+        //                         ClientPacket::Connect() => {
+        //                             server_event_tx
+        //                                 .send(ServerEvent::SendDirect(
+        //                                     addr,
+        //                                     ServerPacket::ConnectChallenge {
+        //                                         challenge: "challenge".to_string(),
+        //                                     },
+        //                                 ))
+        //                                 .unwrap();
+        //                         }
+        //                         _ => {
+        //                             // ignore
+        //                             // TODO: force disconnect
+        //                         }
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // });
 
         // loop {
         //     tokio::select! {
@@ -242,4 +249,5 @@ impl GameServer {
 enum ServerEvent {
     AddClient(ClientId, SocketAddr),
     Message(ClientId, ClientPacket),
+    SendDirect(SocketAddr, ServerPacket),
 }

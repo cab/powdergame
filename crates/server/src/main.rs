@@ -20,7 +20,10 @@ async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer())
-            .with(tracing_subscriber::EnvFilter::try_new("game_server=debug").expect("todo")),
+            .with(
+                tracing_subscriber::EnvFilter::try_new("game_server=debug,gnet=debug")
+                    .expect("todo"),
+            ),
     )
     .unwrap();
 
@@ -54,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .expect("could not parse WebRTC data address/port");
 
-    let public_webrtc_addr = matches
+    let webrtc_public_addr = matches
         .value_of("public")
         .unwrap()
         .parse()
@@ -81,10 +84,17 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let server: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
-        debug!("starting server");
-        server
-            .listen(webrtc_listen_addr, public_webrtc_addr, session_listen_addr)
-            .await;
+        let mut server =
+            gnet::server::Server::<ServerPacket, ClientPacket>::new(gnet::server::ServerConfig {
+                http_listen_addr: session_listen_addr,
+                webrtc_listen_addr,
+                webrtc_public_addr,
+            });
+        server.listen().await;
+        // debug!("starting server");
+        // server
+        //     .listen(webrtc_listen_addr, public_webrtc_addr, session_listen_addr)
+        //     .await;
         Ok(())
     });
 

@@ -1,11 +1,13 @@
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crossbeam_channel::Receiver;
 use crossbeam_channel::Sender;
-use game_common::ClientPacket;
+use game_common::{ClientPacket, ServerPacket};
 use gloo_events::EventListener;
+use gloo_timers::future::TimeoutFuture;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -58,8 +60,8 @@ pub struct Client {
     on_message: EventListener,
     on_ice_candidate: EventListener,
     on_ice_connection_state_change: EventListener,
-    message_tx: mpsc::UnboundedSender<()>,
-    message_rx: mpsc::UnboundedReceiver<()>,
+    message_tx: mpsc::UnboundedSender<ServerPacket>,
+    message_rx: mpsc::UnboundedReceiver<ServerPacket>,
     ready_rx: Option<oneshot::Receiver<()>>,
 }
 
@@ -124,7 +126,7 @@ impl Client {
         }
     }
 
-    pub async fn recv(&mut self) -> Option<()> {
+    pub async fn recv(&mut self) -> Option<ServerPacket> {
         self.message_rx.recv().await
     }
 
@@ -133,7 +135,16 @@ impl Client {
         self.channel.send_with_u8_array(&packet.encode()).unwrap();
     }
 
-    fn send_now(&self, packet: &ClientPacket) {}
+    async fn wait_for(&mut self, matcher: impl Fn(&ServerPacket) -> bool) -> ServerPacket {
+        loop {
+            if let Some(packet) = self.recv().await {
+                debug!("packet is {:?}", packet);
+                if matcher(&packet) {
+                    return packet;
+                }
+            }
+        }
+    }
 
     pub async fn connect(&mut self) -> Result<()> {
         debug!("creating peer offer");
@@ -178,6 +189,13 @@ impl Client {
         .await
         .unwrap();
         self.ready_rx.take().unwrap().await;
+
+        self.send(&ClientPacket::Connect());
+
+        let challenge = self
+            .wait_for(|packet| matches!(packet, ServerPacket::ConnectChallenge { .. }))
+            .await;
+
         Ok(())
     }
 }

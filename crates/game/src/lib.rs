@@ -2,7 +2,9 @@ mod net;
 mod render;
 mod world;
 
-use game_common::ClientPacket;
+use std::{net::SocketAddr, sync::Arc};
+
+use game_common::{ClientPacket, ServerPacket};
 use tracing::{debug, trace, warn};
 use wasm_bindgen::prelude::*;
 use winit::{
@@ -45,15 +47,18 @@ pub fn start_internal(mut canvas: web_sys::HtmlCanvasElement) -> Result<(), Erro
     let renderer = render::Renderer::new(&mut canvas)?;
 
     debug!("setting up networking");
-    let mut client = net::Client::new();
+    let mut client = Arc::new(gnet::client::Client::<ClientPacket, ServerPacket>::new());
 
-    wasm_bindgen_futures::spawn_local(async move {
-        client.connect().await.unwrap();
-        client.send(&ClientPacket::SetName {
-            name: "conner".to_string(),
-        });
-        for message in client.recv().await {
-            debug!("got message {:?}", message);
+    wasm_bindgen_futures::spawn_local({
+        let client = client.clone();
+        async move {
+            client.connect(([127, 0, 0, 1], 9000).into()).await.unwrap();
+            client.send_reliable(ClientPacket::SetName {
+                name: "conner".to_string(),
+            });
+            for message in client.recv().await {
+                debug!("got message {:?}", message);
+            }
         }
     });
 
@@ -86,6 +91,7 @@ pub fn start_internal(mut canvas: web_sys::HtmlCanvasElement) -> Result<(), Erro
                 window.request_redraw();
             }
             Event::RedrawRequested(_) => {
+                client.process();
                 renderer.render();
             }
             _ => (),

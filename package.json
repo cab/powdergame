@@ -8,7 +8,7 @@
     "serve": "node server.js",
     "watch:ts:old": "esbuild ./src/index.ts --bundle --outfile=public/dist/index.js --watch",
     "watch:ts": "node esbuild.js",
-    "watch:rust": "cargo watch -w crates/common -w crates/game -s 'npm run build:rust:dev'",
+    "watch:rust": "cargo watch -w crates/common -w crates/net -w crates/game -s 'npm run build:rust:dev'",
     "build:rust:dev": "wasm-pack build ./crates/game --target web --dev -- --color always "
   },
   "devDependencies": {

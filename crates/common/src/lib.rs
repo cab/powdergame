@@ -1,6 +1,7 @@
 pub mod app;
 pub mod events;
 mod gameloop;
+pub mod net;
 pub mod world;
 
 use serde::{Deserialize, Serialize};
@@ -9,6 +10,7 @@ use world::Cell;
 // server -> client
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ServerPacket {
+    ConnectChallenge { challenge: String },
     SetCells { cells: Vec<Cell> },
 }
 
@@ -25,6 +27,7 @@ impl ServerPacket {
 // client -> server
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ClientPacket {
+    Connect(),
     SetName { name: String },
 }
 
