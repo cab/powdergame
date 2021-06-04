@@ -3,10 +3,11 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use crate::protocol::{BufferResult, ClientProtocolPacket, ReliableBuffer, ServerProtocolPacket};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
+
+use crate::protocol::{BufferResult, ClientProtocolPacket, ReliableBuffer, ServerProtocolPacket};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -19,31 +20,29 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[cfg(target_arch = "wasm32")]
 mod wasm {
 
-    use std::net::SocketAddr;
-
-    use super::{Error, Result};
-    use gloo_events::EventListener;
-    use js_sys::Uint8Array;
     use std::{
         cell::{Cell, RefCell},
+        net::SocketAddr,
         sync::Arc,
         time::Duration,
     };
-    use tokio::sync::oneshot;
-    use tracing::{debug, warn};
-    use wasm_bindgen::JsCast;
-    use web_sys::{BinaryType, MessageEvent, RtcDataChannel, RtcPeerConnection, WebSocket};
 
     use crossbeam_channel::{Receiver, Sender};
+    use gloo_events::EventListener;
     use gloo_timers::future::TimeoutFuture;
+    use js_sys::Uint8Array;
     use serde::{Deserialize, Serialize};
-    use tokio::sync::mpsc;
-    use wasm_bindgen::JsValue;
+    use tokio::sync::{mpsc, oneshot};
+    use tracing::{debug, warn};
+    use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{
-        RtcConfiguration, RtcDataChannelInit, RtcDataChannelType, RtcIceCandidate,
-        RtcIceCandidateInit, RtcSdpType, RtcSessionDescription, RtcSessionDescriptionInit,
+        BinaryType, MessageEvent, RtcConfiguration, RtcDataChannel, RtcDataChannelInit,
+        RtcDataChannelType, RtcIceCandidate, RtcIceCandidateInit, RtcPeerConnection, RtcSdpType,
+        RtcSessionDescription, RtcSessionDescriptionInit, WebSocket,
     };
+
+    use super::{Error, Result};
 
     #[derive(Debug)]
     pub(super) struct ReliableTransport {

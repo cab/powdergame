@@ -1,12 +1,12 @@
-use serde::{Deserialize, Serialize};
-
-use crate::{events::Events, gameloop::Timer};
 use bevy_ecs::{
     component::Component,
     prelude::*,
     schedule::{RunOnce, StageLabel, SystemDescriptor},
 };
+use serde::{Deserialize, Serialize};
 use tracing::trace;
+
+use crate::{events::Events, gameloop::Timer};
 
 pub struct App {
     timer: Timer,

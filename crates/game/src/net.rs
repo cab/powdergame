@@ -14,11 +14,8 @@ use tracing::{debug, warn};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    RtcDataChannel, RtcIceCandidate, RtcIceCandidateInit, RtcSdpType, RtcSessionDescription,
-};
-
-use web_sys::{
-    RtcConfiguration, RtcDataChannelInit, RtcDataChannelType, RtcPeerConnection,
+    RtcConfiguration, RtcDataChannel, RtcDataChannelInit, RtcDataChannelType, RtcIceCandidate,
+    RtcIceCandidateInit, RtcPeerConnection, RtcSdpType, RtcSessionDescription,
     RtcSessionDescriptionInit,
 };
 

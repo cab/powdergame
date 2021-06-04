@@ -1,17 +1,17 @@
 mod net;
 mod world;
 
-use crate::{
-    net::{ClientId, GameServer},
-    world::WorldPlugin,
-};
-
 use bevy_ecs::prelude::*;
 use clap::Arg;
 use crossbeam_channel::{Receiver, Sender};
 use game_common::{app::App, world::Tick, ClientPacket, ServerPacket};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{debug, info, trace, warn};
+
+use crate::{
+    net::{ClientId, GameServer},
+    world::WorldPlugin,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
