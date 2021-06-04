@@ -10,8 +10,7 @@ use bevy_ecs::prelude::*;
 use clap::Arg;
 use crossbeam_channel::{Receiver, Sender};
 use game_common::{app::App, world::Tick, ClientPacket, ServerPacket};
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{debug, info, trace, warn};
 
 #[tokio::main]
@@ -89,7 +88,8 @@ async fn main() -> anyhow::Result<()> {
                 http_listen_addr: session_listen_addr,
                 webrtc_listen_addr,
                 webrtc_public_addr,
-            });
+            })
+            .await;
         server.listen().await;
         // debug!("starting server");
         // server

@@ -52,7 +52,7 @@ impl ClientProtocolPacket {
 }
 
 #[derive(Debug)]
-pub struct ReliableBuffer<T> {
+pub(crate) struct ReliableBuffer<T> {
     pending: Vec<T>,
     sent: Vec<Sent<T>>,
 }
@@ -63,9 +63,12 @@ struct Sent<T> {
     sent_at: instant::Instant,
 }
 
-// pub(crate) enum BufferResult {
-//   Sent
-// }
+#[derive(Debug, Copy, Clone)]
+pub(crate) enum BufferResult {
+    ProbablySent,
+    Sent,
+    NotSent,
+}
 
 impl<T> ReliableBuffer<T> {
     pub fn new() -> Self {
@@ -75,15 +78,22 @@ impl<T> ReliableBuffer<T> {
         }
     }
 
-    pub fn process(&mut self, mut f: impl FnMut(&T) -> bool) {
+    pub fn process(&mut self, mut f: impl FnMut(&T) -> BufferResult) {
         let mut not_sent = Vec::new();
         for value in self.pending.drain(..) {
             let sent = f(&value);
-            if sent {
-                let sent_at = instant::Instant::now();
-                self.sent.push(Sent { value, sent_at })
-            } else {
-                not_sent.push(value);
+            match sent {
+                BufferResult::NotSent => {
+                    not_sent.push(value);
+                }
+                BufferResult::ProbablySent => {
+                    // we'll need to verify with the server that this was sent
+                    let sent_at = instant::Instant::now();
+                    self.sent.push(Sent { value, sent_at })
+                }
+                BufferResult::Sent => {
+                    // no need to verify (e.g. TCP was used)
+                }
             }
         }
         self.pending = not_sent;
@@ -96,3 +106,9 @@ impl<T> ReliableBuffer<T> {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ClientId(u32);
+
+impl ClientId {
+    pub(crate) fn new(id: u32) -> Self {
+        Self(id)
+    }
+}

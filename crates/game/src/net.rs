@@ -1,28 +1,26 @@
-use std::cell::Cell;
-use std::cell::RefCell;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    cell::{Cell, RefCell},
+    sync::Arc,
+    time::Duration,
+};
 
-use crossbeam_channel::Receiver;
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Receiver, Sender};
 use game_common::{ClientPacket, ServerPacket};
 use gloo_events::EventListener;
 use gloo_timers::future::TimeoutFuture;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
-use wasm_bindgen::JsCast;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::RtcDataChannel;
-use web_sys::RtcIceCandidate;
-use web_sys::RtcIceCandidateInit;
-use web_sys::RtcSdpType;
-use web_sys::RtcSessionDescription;
+use web_sys::{
+    RtcDataChannel, RtcIceCandidate, RtcIceCandidateInit, RtcSdpType, RtcSessionDescription,
+};
 
-use web_sys::RtcSessionDescriptionInit;
-use web_sys::{RtcConfiguration, RtcDataChannelInit, RtcDataChannelType, RtcPeerConnection};
+use web_sys::{
+    RtcConfiguration, RtcDataChannelInit, RtcDataChannelType, RtcPeerConnection,
+    RtcSessionDescriptionInit,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

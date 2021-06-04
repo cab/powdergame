@@ -979,6 +979,7 @@ name = "gnet"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "bytes",
  "crossbeam-channel",
  "futures",
  "gloo-events",
@@ -995,6 +996,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webrtc-unreliable",
 ]
 
 [[package]]

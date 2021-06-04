@@ -13,8 +13,10 @@ use hyper::{
     service::{make_service_fn, service_fn},
     Body, Method, Response, Server, StatusCode,
 };
-use tokio::sync::RwLock;
-use tokio::{net::TcpListener, sync::mpsc};
+use tokio::{
+    net::TcpListener,
+    sync::{mpsc, RwLock},
+};
 use tracing::{debug, info, trace, warn};
 use webrtc_unreliable::{MessageType, Server as RtcServer, SessionEndpoint};
 

@@ -66,6 +66,7 @@ pub fn start_internal(mut canvas: web_sys::HtmlCanvasElement) -> Result<(), Erro
     let world = bevy_ecs::world::World::new();
 
     let event_loop = EventLoop::new();
+    debug!("creating window");
     let window = {
         use winit::platform::web::WindowBuilderExtWebSys;
         WindowBuilder::new()
@@ -79,6 +80,7 @@ pub fn start_internal(mut canvas: web_sys::HtmlCanvasElement) -> Result<(), Erro
             .unwrap()
     };
 
+    debug!("starting event loop");
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
 
