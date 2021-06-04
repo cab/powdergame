@@ -221,7 +221,7 @@ mod wasm {
             self.channel.send_with_u8_array(data).unwrap();
         }
 
-        pub async fn connect(&mut self) -> Result<()> {
+        pub async fn connect(&mut self, addr: SocketAddr) -> Result<()> {
             debug!("creating peer offer");
             let offer = JsFuture::from(self.peer.create_offer()).await.unwrap();
             JsFuture::from(self.peer.set_local_description(&offer.unchecked_into()))
@@ -229,7 +229,7 @@ mod wasm {
                 .unwrap();
             let res = self
                 .http_client
-                .post("http://localhost:9000/new_session")
+                .post(format!("http://{}/rtc", addr))
                 .body(self.peer.local_description().unwrap().sdp())
                 .send()
                 .await?
@@ -351,6 +351,7 @@ where
 struct ClientInner<OutgoingPacket, IncomingPacket> {
     reliable_buffer: ReliableBuffer<ProtocolOrUser<OutgoingPacket>>,
     reliable_transport: ReliableTransport,
+    unreliable_transport: UnreliableTransport,
     incoming_tx: crossbeam_channel::Sender<IncomingPacket>,
     incoming_rx: crossbeam_channel::Receiver<IncomingPacket>,
 }
@@ -365,6 +366,7 @@ where
 
         Self {
             reliable_transport: ReliableTransport::new(),
+            unreliable_transport: UnreliableTransport::new(),
             reliable_buffer: ReliableBuffer::new(),
             incoming_rx,
             incoming_tx,
@@ -372,7 +374,8 @@ where
     }
 
     pub async fn connect(&mut self, addr: SocketAddr) -> Result<()> {
-        self.reliable_transport.connect(addr).await;
+        self.reliable_transport.connect(addr.clone()).await;
+        self.unreliable_transport.connect(addr).await;
         Ok(())
     }
 
@@ -405,7 +408,7 @@ where
                 debug!("got server protocol packet: {:?}", packet);
                 match packet {
                     ServerProtocolPacket::ConnectChallenge { challenge, .. } => {
-                        self.send_reliable_protocol(ClientProtocolPacket::Connect { challenge })
+                        self.send_unreliable_protocol(ClientProtocolPacket::Connect { challenge })
                     }
                 }
             }
@@ -413,6 +416,11 @@ where
     }
 
     fn send_user(&self, packet: OutgoingPacket) {}
+
+    fn send_unreliable_protocol(&mut self, packet: ClientProtocolPacket) {
+        self.unreliable_transport.send(&packet.encode());
+    }
+
 
     fn send_reliable_protocol(&mut self, packet: ClientProtocolPacket) {
         self.reliable_buffer.add(ProtocolOrUser::Protocol(packet));
