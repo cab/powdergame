@@ -67,6 +67,7 @@ pub fn start_internal(mut canvas: web_sys::HtmlCanvasElement) -> Result<(), Erro
 
     let event_loop = EventLoop::new();
     debug!("creating window");
+    #[cfg(target_arch = "wasm32")]
     let window = {
         use winit::platform::web::WindowBuilderExtWebSys;
         WindowBuilder::new()
@@ -76,6 +77,18 @@ pub fn start_internal(mut canvas: web_sys::HtmlCanvasElement) -> Result<(), Erro
                 width: canvas.width() / 2,
             })
             .with_canvas(Some(canvas))
+            .build(&event_loop)
+            .unwrap()
+    };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let window = {
+        WindowBuilder::new()
+            .with_title("jsgame")
+            .with_inner_size(winit::dpi::LogicalSize {
+                height: canvas.height() / 2,
+                width: canvas.width() / 2,
+            })
             .build(&event_loop)
             .unwrap()
     };

@@ -861,8 +861,6 @@ dependencies = [
  "console_error_panic_hook",
  "crossbeam-channel",
  "game_common",
- "gloo-events",
- "gloo-timers",
  "gnet",
  "js-sys",
  "reqwest",

@@ -5,13 +5,11 @@ use bevy_ecs::prelude::*;
 use clap::Arg;
 use crossbeam_channel::{Receiver, Sender};
 use game_common::{app::App, world::Tick, ClientPacket, ServerPacket};
+use gnet::protocol::ClientId;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{debug, info, trace, warn};
 
-use crate::{
-    net::{ClientId, GameServer},
-    world::WorldPlugin,
-};
+use crate::world::WorldPlugin;
 
 // #[tokio::main(flavor = "current_thread")]
 #[tokio::main]
@@ -69,13 +67,12 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .expect("could not parse HTTP address/port");
 
-    let mut server = GameServer::new();
-
-    let (server_broadcast_tx, server_tx, server_rx) = server.channels().unwrap();
+    let (server_broadcast_tx, server_broadcast_rx) = mpsc::unbounded_channel();
+    let (server_tx, server_tx_rx) = mpsc::unbounded_channel();
+    let (server_rx_tx, server_rx) = mpsc::unbounded_channel();
 
     let gameloop = tokio::spawn(async move {
         let mut app = setup_ecs(server_broadcast_tx, server_tx, server_rx);
-
         debug!("starting game loop");
         tick(move || {
             app.update();
@@ -84,13 +81,17 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let server: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
-        let mut server =
-            gnet::server::Server::<ServerPacket, ClientPacket>::new(gnet::server::ServerConfig {
+        let mut server = gnet::server::Server::<ServerPacket, ClientPacket>::new(
+            gnet::server::ServerConfig {
                 http_listen_addr: session_listen_addr,
                 webrtc_listen_addr,
                 webrtc_public_addr,
-            })
-            .await;
+            },
+            server_broadcast_rx,
+            server_tx_rx,
+            server_rx_tx,
+        )
+        .await;
         server.listen().await;
         // debug!("starting server");
         // server

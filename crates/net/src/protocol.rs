@@ -17,13 +17,11 @@ impl ProtocolMarker {
 }
 
 // server -> client
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub enum ServerProtocolPacket {
-    ConnectChallenge {
-        challenge: String,
-        marker: ProtocolMarker,
-    },
-    Welcome,
+pub struct ServerProtocolPacket {
+    inner: ServerProtocolPacketInner,
+    marker: ProtocolMarker,
 }
 
 impl ServerProtocolPacket {
@@ -33,6 +31,27 @@ impl ServerProtocolPacket {
 
     pub fn encode(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap()
+    }
+}
+
+impl From<ServerProtocolPacket> for ServerProtocolPacketInner {
+    fn from(packet: ServerProtocolPacket) -> Self {
+        packet.inner
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum ServerProtocolPacketInner {
+    ConnectChallenge { challenge: String },
+    Welcome {},
+}
+
+impl From<ServerProtocolPacketInner> for ServerProtocolPacket {
+    fn from(inner: ServerProtocolPacketInner) -> Self {
+        Self {
+            inner,
+            marker: ProtocolMarker::new(),
+        }
     }
 }
 

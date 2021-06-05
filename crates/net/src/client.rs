@@ -7,7 +7,10 @@ use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use crate::protocol::{BufferResult, ClientProtocolPacket, ReliableBuffer, ServerProtocolPacket};
+use crate::protocol::{
+    BufferResult, ClientProtocolPacket, ReliableBuffer, ServerProtocolPacket,
+    ServerProtocolPacketInner,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -33,7 +36,7 @@ mod wasm {
     use js_sys::Uint8Array;
     use serde::{Deserialize, Serialize};
     use tokio::sync::{mpsc, oneshot};
-    use tracing::{debug, warn};
+    use tracing::{debug, trace, warn};
     use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{
@@ -173,7 +176,7 @@ mod wasm {
                 EventListener::new(&peer, "iceconnectionstatechange", {
                     let peer = peer.clone();
                     move |e| {
-                        debug!("ice state change: {:?}", peer.ice_connection_state());
+                        trace!("ice state change: {:?}", peer.ice_connection_state());
                     }
                 });
             let (ready_tx, ready_rx) = oneshot::channel::<()>();
@@ -188,17 +191,17 @@ mod wasm {
             });
             let on_open = EventListener::once(&channel, "open", {
                 move |e| {
-                    debug!("data channel opened");
+                    trace!("data channel opened");
                     ready_tx.send(());
                 }
             });
             let on_message = EventListener::new(&channel, "message", {
                 move |e| {
-                    debug!("got message");
+                    trace!("got message");
                 }
             });
             let on_ice_candidate = EventListener::new(&peer, "icecandidate", move |e| {
-                debug!("ice candidate event");
+                trace!("ice candidate event");
             });
 
             let (incoming_tx, incoming_rx) = crossbeam_channel::unbounded();
@@ -279,6 +282,54 @@ mod wasm {
 
 #[cfg(target_arch = "wasm32")]
 use wasm::*;
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+
+    use std::net::SocketAddr;
+
+    use super::Result;
+
+    #[derive(Debug)]
+    pub(super) struct UnreliableTransport {}
+
+    impl UnreliableTransport {
+        pub fn new() -> Self {
+            unimplemented!()
+        }
+        pub fn send(&self, data: &[u8]) {
+            unimplemented!()
+        }
+        pub async fn connect(&mut self, addr: SocketAddr) -> Result<()> {
+            unimplemented!()
+        }
+    }
+
+    #[derive(Debug)]
+    pub(super) struct ReliableTransport {}
+
+    impl ReliableTransport {
+        pub(super) fn new() -> Self {
+            unimplemented!()
+        }
+        pub fn incoming(&self) -> impl Iterator<Item = Vec<u8>> + '_ {
+            unimplemented!();
+            vec![].into_iter()
+        }
+        pub fn process(&mut self) {
+            unimplemented!()
+        }
+        pub fn send(&mut self, data: &[u8]) -> bool {
+            unimplemented!()
+        }
+        pub async fn connect(&mut self, addr: SocketAddr) {
+            unimplemented!()
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::*;
 
 type Inner<OutgoingPacket, IncomingPacket> =
     Arc<RwLock<ClientInner<OutgoingPacket, IncomingPacket>>>;
@@ -406,11 +457,12 @@ where
             } else if let Some(packet) = bincoder.deserialize::<ServerProtocolPacket>(&packet).ok()
             {
                 debug!("got server protocol packet: {:?}", packet);
+                let packet = packet.into();
                 match packet {
-                    ServerProtocolPacket::ConnectChallenge { challenge, .. } => {
+                    ServerProtocolPacketInner::ConnectChallenge { challenge } => {
                         self.send_unreliable_protocol(ClientProtocolPacket::Connect { challenge })
                     }
-                    ServerProtocolPacket::Welcome => {
+                    ServerProtocolPacketInner::Welcome {} => {
                         debug!("welcomed");
                     }
                 }

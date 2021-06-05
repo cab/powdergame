@@ -17,6 +17,7 @@ use webrtc_unreliable::{Server as RtcServer, SessionEndpoint};
 
 use crate::protocol::{
     ClientId, ClientProtocolPacket, ProtocolMarker, ReliableBuffer, ServerProtocolPacket,
+    ServerProtocolPacketInner,
 };
 
 struct ReliableTransport {
@@ -176,11 +177,8 @@ async fn client_connected(ws: WebSocket, inner: Inner) {
         debug!("ws send loop done");
     });
     tx.send(
-        ServerProtocolPacket::ConnectChallenge {
-            challenge,
-            marker: ProtocolMarker::new(),
-        }
-        .encode(),
+        ServerProtocolPacket::from(ServerProtocolPacketInner::ConnectChallenge { challenge })
+            .encode(),
     )
     .unwrap();
 
@@ -314,6 +312,9 @@ pub struct Server<OutgoingPacket, IncomingPacket> {
     unreliable_transport: Option<UnreliableTransport>,
     events_rx: mpsc::Receiver<ReliableEvent>,
     unreliable_incoming_rx: mpsc::Receiver<(SocketAddr, Vec<u8>)>,
+    server_broadcast_rx: mpsc::UnboundedReceiver<OutgoingPacket>,
+    server_rx: mpsc::UnboundedReceiver<(ClientId, OutgoingPacket)>,
+    server_tx: mpsc::UnboundedSender<(ClientId, IncomingPacket)>,
 }
 
 impl<OutgoingPacket, IncomingPacket> Server<OutgoingPacket, IncomingPacket>
@@ -321,7 +322,12 @@ where
     OutgoingPacket: Send + Sync,
     IncomingPacket: Send + Sync,
 {
-    pub async fn new(config: ServerConfig) -> Self {
+    pub async fn new(
+        config: ServerConfig,
+        server_broadcast_rx: mpsc::UnboundedReceiver<OutgoingPacket>,
+        server_rx: mpsc::UnboundedReceiver<(ClientId, OutgoingPacket)>,
+        server_tx: mpsc::UnboundedSender<(ClientId, IncomingPacket)>,
+    ) -> Self {
         let (events_tx, events_rx) = mpsc::channel(32);
 
         let reliable_transport = ReliableTransport::new(config.http_listen_addr.clone(), events_tx);
@@ -341,6 +347,9 @@ where
             unreliable_transport: Some(unreliable_transport),
             events_rx,
             unreliable_incoming_rx,
+            server_broadcast_rx,
+            server_rx,
+            server_tx,
         }
     }
 
@@ -395,7 +404,7 @@ where
                                     "associated unreliable connection to reliable connection"
                                 );
                                 reliable_tx
-                                    .send((client_id, ServerProtocolPacket::Welcome.encode()))
+                                    .send((client_id, ServerProtocolPacket::from(ServerProtocolPacketInner::Welcome{}).encode()))
                                     .await
                                     .unwrap();
                             } else {
