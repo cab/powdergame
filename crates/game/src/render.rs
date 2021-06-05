@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
-use bytemuck::{cast_ref};
-use js_sys::{Float32Array};
+use bytemuck::cast_ref;
+use js_sys::Float32Array;
 use tracing::debug;
 use ultraviolet::{projection::lh_yup::orthographic_gl, Mat4, Vec3};
 use wasm_bindgen::{JsCast, JsValue};
@@ -37,7 +37,11 @@ impl Renderer {
         );
         let pixel_pass = PixelPass::new(Rc::clone(&context));
         let sprite_pass = SpritePass::new(Rc::clone(&context));
-        Ok(Self { context, pixel_pass, sprite_pass })
+        Ok(Self {
+            context,
+            pixel_pass,
+            sprite_pass,
+        })
     }
 
     pub fn render(&self) {
@@ -91,7 +95,13 @@ impl PixelPass {
         // let u_model_view = context
         //     .get_uniform_location(&program, "u_model_view")
         //     .unwrap();
-        Self { context, position_buffer, program, a_vertex_position, u_projection }
+        Self {
+            context,
+            position_buffer,
+            program,
+            a_vertex_position,
+            u_projection,
+        }
     }
 
     pub fn render(&self) {
@@ -193,7 +203,13 @@ impl SpritePass {
         // let u_model_view = context
         //     .get_uniform_location(&program, "u_model_view")
         //     .unwrap();
-        Self { context, position_buffer, program, a_vertex_position, u_projection }
+        Self {
+            context,
+            position_buffer,
+            program,
+            a_vertex_position,
+            u_projection,
+        }
     }
 
     pub fn render(&self) {

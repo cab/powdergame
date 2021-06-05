@@ -1,12 +1,10 @@
 use bevy_ecs::prelude::*;
-
 use game_common::{
     app::{AppBuilder, Plugin},
     world::Cell,
     ServerPacket,
 };
 use tokio::sync::mpsc;
-
 
 #[derive(Debug)]
 struct Cells {

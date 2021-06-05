@@ -3,7 +3,6 @@ mod world;
 
 use bevy_ecs::prelude::*;
 use clap::Arg;
-
 use game_common::{app::App, world::Tick, ClientPacket, ServerPacket};
 use gnet::protocol::ClientId;
 use tokio::{sync::mpsc, task::JoinHandle};

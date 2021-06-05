@@ -4,8 +4,6 @@ use bevy_ecs::{
     schedule::{RunOnce, StageLabel, SystemDescriptor},
 };
 
-
-
 use crate::{events::Events, gameloop::Timer};
 
 pub struct App {

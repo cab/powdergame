@@ -2,10 +2,10 @@ mod net;
 mod render;
 mod world;
 
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use game_common::{ClientPacket, ServerPacket};
-use tracing::{debug};
+use tracing::debug;
 use wasm_bindgen::prelude::*;
 use winit::{
     event::{Event, WindowEvent},

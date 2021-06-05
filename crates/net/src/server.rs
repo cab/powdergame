@@ -1,12 +1,7 @@
-use std::{
-    collections::HashMap, marker::PhantomData, net::SocketAddr, sync::Arc,
-};
+use std::{collections::HashMap, marker::PhantomData, net::SocketAddr, sync::Arc};
 
 use futures::{FutureExt, SinkExt, StreamExt};
-
-use tokio::{
-    sync::{mpsc, RwLock},
-};
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, warn};
 use warp::{
     ws::{Message, WebSocket},
@@ -15,8 +10,7 @@ use warp::{
 use webrtc_unreliable::{Server as RtcServer, SessionEndpoint};
 
 use crate::protocol::{
-    ClientId, ClientProtocolPacket, ReliableBuffer, ServerProtocolPacket,
-    ServerProtocolPacketInner,
+    ClientId, ClientProtocolPacket, ReliableBuffer, ServerProtocolPacket, ServerProtocolPacketInner,
 };
 
 struct ReliableTransport {

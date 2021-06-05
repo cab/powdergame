@@ -1,5 +1,3 @@
-
-
 use serde::{Deserialize, Serialize};
 
 // used to avoid having the same bytes as a user packet

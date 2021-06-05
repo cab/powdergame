@@ -4,7 +4,6 @@ use std::{
 };
 
 use serde::{de::DeserializeOwned, Serialize};
-
 use tracing::{debug, warn};
 
 use crate::protocol::{
@@ -454,8 +453,7 @@ where
         for packet in packets {
             if let Ok(packet) = bincoder.deserialize::<IncomingPacket>(&packet) {
                 debug!("got this: {:?}", packet);
-            } else if let Ok(packet) = bincoder.deserialize::<ServerProtocolPacket>(&packet)
-            {
+            } else if let Ok(packet) = bincoder.deserialize::<ServerProtocolPacket>(&packet) {
                 debug!("got server protocol packet: {:?}", packet);
                 let packet = packet.into();
                 match packet {
