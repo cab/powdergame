@@ -3,8 +3,8 @@ use bevy_ecs::{
     prelude::*,
     schedule::{RunOnce, StageLabel, SystemDescriptor},
 };
-use serde::{Deserialize, Serialize};
-use tracing::trace;
+
+
 
 use crate::{events::Events, gameloop::Timer};
 
@@ -63,7 +63,7 @@ impl AppBuilder {
         }
     }
 
-    fn add_default_stages(mut self) -> Self {
+    fn add_default_stages(self) -> Self {
         self.add_stage(
             CoreStage::Startup,
             Schedule::default()
@@ -98,7 +98,7 @@ impl AppBuilder {
         self
     }
 
-    pub fn add_event<T>(mut self) -> Self
+    pub fn add_event<T>(self) -> Self
     where
         T: Component,
     {
@@ -106,7 +106,7 @@ impl AppBuilder {
             .add_system_to_stage(CoreStage::First, Events::<T>::update_system.system())
     }
 
-    pub fn add_startup_system(mut self, system: impl Into<SystemDescriptor>) -> Self {
+    pub fn add_startup_system(self, system: impl Into<SystemDescriptor>) -> Self {
         self.add_startup_system_to_stage(StartupStage::Startup, system)
     }
 
@@ -131,7 +131,7 @@ impl AppBuilder {
         self
     }
 
-    pub fn add_system(mut self, system: impl Into<SystemDescriptor>) -> Self {
+    pub fn add_system(self, system: impl Into<SystemDescriptor>) -> Self {
         self.add_system_to_stage(CoreStage::Update, system)
     }
 

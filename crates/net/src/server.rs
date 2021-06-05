@@ -1,14 +1,13 @@
 use std::{
-    collections::HashMap, convert::Infallible, marker::PhantomData, net::SocketAddr, sync::Arc,
+    collections::HashMap, marker::PhantomData, net::SocketAddr, sync::Arc,
 };
 
 use futures::{FutureExt, SinkExt, StreamExt};
-use serde::{de::DeserializeOwned, Serialize};
+
 use tokio::{
     sync::{mpsc, RwLock},
-    task::yield_now,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 use warp::{
     ws::{Message, WebSocket},
     Filter,
@@ -16,7 +15,7 @@ use warp::{
 use webrtc_unreliable::{Server as RtcServer, SessionEndpoint};
 
 use crate::protocol::{
-    ClientId, ClientProtocolPacket, ProtocolMarker, ReliableBuffer, ServerProtocolPacket,
+    ClientId, ClientProtocolPacket, ReliableBuffer, ServerProtocolPacket,
     ServerProtocolPacketInner,
 };
 
@@ -75,7 +74,7 @@ impl ReliableTransport {
 
             let mut inner = inner.write().await;
 
-            if let Some(mut endpoint) = inner.session_endpoint.as_mut() {
+            if let Some(endpoint) = inner.session_endpoint.as_mut() {
                 match endpoint
                     .http_session_request(req.map_ok(|mut buf| buf.copy_to_bytes(buf.remaining())))
                     .await
@@ -330,12 +329,12 @@ where
     ) -> Self {
         let (events_tx, events_rx) = mpsc::channel(32);
 
-        let reliable_transport = ReliableTransport::new(config.http_listen_addr.clone(), events_tx);
+        let reliable_transport = ReliableTransport::new(config.http_listen_addr, events_tx);
         let (incoming_tx, unreliable_incoming_rx) = mpsc::channel(32);
 
         let unreliable_transport = UnreliableTransport::new(
-            config.webrtc_listen_addr.clone(),
-            config.webrtc_public_addr.clone(),
+            config.webrtc_listen_addr,
+            config.webrtc_public_addr,
             incoming_tx,
         )
         .await;
@@ -359,12 +358,12 @@ where
         transport
             .set_session_endpoint(unreliable_transport.session_endpoint())
             .await;
-        let reliable_rx = transport.incoming().await;
+        let _reliable_rx = transport.incoming().await;
         let reliable_tx = transport.outgoing().await;
-        let reliable = tokio::spawn(async move {
+        let _reliable = tokio::spawn(async move {
             transport.listen().await;
         });
-        let unreliable = tokio::spawn(async move {
+        let _unreliable = tokio::spawn(async move {
             unreliable_transport.listen().await;
         });
         {
@@ -389,8 +388,8 @@ where
                     }
 
                     Some((addr, packet)) = self.unreliable_incoming_rx.recv() => {
-                        if let Some(client_id) = processor.client_id(&addr) {
-                        } else if let Some(ClientProtocolPacket::Connect { challenge }) = bincoder.deserialize::<ClientProtocolPacket>(&packet).ok() {
+                        if let Some(_client_id) = processor.client_id(&addr) {
+                        } else if let Ok(ClientProtocolPacket::Connect { challenge }) = bincoder.deserialize::<ClientProtocolPacket>(&packet) {
                             debug!(
                                 ?challenge,
                                 ?addr,
@@ -450,5 +449,5 @@ impl Processor {
         self.challenge_to_client.insert(challenge, client_id);
     }
 
-    fn unregister_client(&mut self, client_id: &ClientId) {}
+    fn unregister_client(&mut self, _client_id: &ClientId) {}
 }

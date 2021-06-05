@@ -3,11 +3,11 @@ mod world;
 
 use bevy_ecs::prelude::*;
 use clap::Arg;
-use crossbeam_channel::{Receiver, Sender};
+
 use game_common::{app::App, world::Tick, ClientPacket, ServerPacket};
 use gnet::protocol::ClientId;
 use tokio::{sync::mpsc, task::JoinHandle};
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace};
 
 use crate::world::WorldPlugin;
 

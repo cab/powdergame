@@ -1,12 +1,12 @@
 use bevy_ecs::prelude::*;
-use crossbeam_channel::Sender;
+
 use game_common::{
     app::{AppBuilder, Plugin},
     world::Cell,
     ServerPacket,
 };
 use tokio::sync::mpsc;
-use tracing::debug;
+
 
 #[derive(Debug)]
 struct Cells {
@@ -189,7 +189,7 @@ fn send_state(cells: Res<Cells>, broadcast: Res<mpsc::UnboundedSender<ServerPack
 fn advance_cells(mut cells: ResMut<Cells>) {
     let changes = cells
         .neighborhoods()
-        .map(|(position, neighborhood)| CellChange::Set {
+        .map(|(position, _neighborhood)| CellChange::Set {
             x: position.0,
             y: position.1,
             cell: Cell::Stone,

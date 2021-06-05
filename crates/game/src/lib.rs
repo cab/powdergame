@@ -2,10 +2,10 @@ mod net;
 mod render;
 mod world;
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{sync::Arc};
 
 use game_common::{ClientPacket, ServerPacket};
-use tracing::{debug, trace, warn};
+use tracing::{debug};
 use wasm_bindgen::prelude::*;
 use winit::{
     event::{Event, WindowEvent},
@@ -47,7 +47,7 @@ pub fn start_internal(mut canvas: web_sys::HtmlCanvasElement) -> Result<(), Erro
     let renderer = render::Renderer::new(&mut canvas)?;
 
     debug!("setting up networking");
-    let mut client = Arc::new(gnet::client::Client::<ClientPacket, ServerPacket>::new());
+    let client = Arc::new(gnet::client::Client::<ClientPacket, ServerPacket>::new());
 
     wasm_bindgen_futures::spawn_local({
         let client = client.clone();
@@ -63,7 +63,7 @@ pub fn start_internal(mut canvas: web_sys::HtmlCanvasElement) -> Result<(), Erro
     });
 
     debug!("setting up ecs");
-    let world = bevy_ecs::world::World::new();
+    let _world = bevy_ecs::world::World::new();
 
     let event_loop = EventLoop::new();
     debug!("creating window");

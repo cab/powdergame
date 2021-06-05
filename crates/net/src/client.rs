@@ -4,7 +4,7 @@ use std::{
 };
 
 use serde::{de::DeserializeOwned, Serialize};
-use tokio::sync::mpsc;
+
 use tracing::{debug, warn};
 
 use crate::protocol::{
@@ -297,10 +297,10 @@ mod native {
         pub fn new() -> Self {
             unimplemented!()
         }
-        pub fn send(&self, data: &[u8]) {
+        pub fn send(&self, _data: &[u8]) {
             unimplemented!()
         }
-        pub async fn connect(&mut self, addr: SocketAddr) -> Result<()> {
+        pub async fn connect(&mut self, _addr: SocketAddr) -> Result<()> {
             unimplemented!()
         }
     }
@@ -319,10 +319,10 @@ mod native {
         pub fn process(&mut self) {
             unimplemented!()
         }
-        pub fn send(&mut self, data: &[u8]) -> bool {
+        pub fn send(&mut self, _data: &[u8]) -> bool {
             unimplemented!()
         }
-        pub async fn connect(&mut self, addr: SocketAddr) {
+        pub async fn connect(&mut self, _addr: SocketAddr) {
             unimplemented!()
         }
     }
@@ -425,7 +425,7 @@ where
     }
 
     pub async fn connect(&mut self, addr: SocketAddr) -> Result<()> {
-        self.reliable_transport.connect(addr.clone()).await;
+        self.reliable_transport.connect(addr).await;
         self.unreliable_transport.connect(addr).await;
         Ok(())
     }
@@ -452,9 +452,9 @@ where
             .into_iter()
             .collect::<Vec<_>>();
         for packet in packets {
-            if let Some(packet) = bincoder.deserialize::<IncomingPacket>(&packet).ok() {
+            if let Ok(packet) = bincoder.deserialize::<IncomingPacket>(&packet) {
                 debug!("got this: {:?}", packet);
-            } else if let Some(packet) = bincoder.deserialize::<ServerProtocolPacket>(&packet).ok()
+            } else if let Ok(packet) = bincoder.deserialize::<ServerProtocolPacket>(&packet)
             {
                 debug!("got server protocol packet: {:?}", packet);
                 let packet = packet.into();
@@ -470,7 +470,7 @@ where
         }
     }
 
-    fn send_user(&self, packet: OutgoingPacket) {}
+    fn send_user(&self, _packet: OutgoingPacket) {}
 
     fn send_unreliable_protocol(&mut self, packet: ClientProtocolPacket) {
         self.unreliable_transport.send(&packet.encode());

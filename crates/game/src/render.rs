@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
-use bytemuck::{cast, cast_ref};
-use js_sys::{ArrayBuffer, Float32Array};
+use bytemuck::{cast_ref};
+use js_sys::{Float32Array};
 use tracing::debug;
-use ultraviolet::{projection::lh_yup::orthographic_gl, Mat4, Vec3, Vec4};
+use ultraviolet::{projection::lh_yup::orthographic_gl, Mat4, Vec3};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
     HtmlCanvasElement, WebGl2RenderingContext, WebGlBuffer, WebGlProgram, WebGlShader,
@@ -37,11 +37,7 @@ impl Renderer {
         );
         let pixel_pass = PixelPass::new(Rc::clone(&context));
         let sprite_pass = SpritePass::new(Rc::clone(&context));
-        Ok(Self {
-            context,
-            sprite_pass,
-            pixel_pass,
-        })
+        Ok(Self { context, pixel_pass, sprite_pass })
     }
 
     pub fn render(&self) {
@@ -95,14 +91,7 @@ impl PixelPass {
         // let u_model_view = context
         //     .get_uniform_location(&program, "u_model_view")
         //     .unwrap();
-        Self {
-            context,
-            program,
-            position_buffer,
-            a_vertex_position,
-            u_projection,
-            // u_model_view,
-        }
+        Self { context, position_buffer, program, a_vertex_position, u_projection }
     }
 
     pub fn render(&self) {
@@ -111,7 +100,7 @@ impl PixelPass {
             matrix
         };
 
-        let model_view = {
+        let _model_view = {
             let mut matrix = Mat4::identity();
             matrix.translate(&Vec3::new(0.0, 0.0, -6.0));
             matrix
@@ -204,14 +193,7 @@ impl SpritePass {
         // let u_model_view = context
         //     .get_uniform_location(&program, "u_model_view")
         //     .unwrap();
-        Self {
-            context,
-            program,
-            position_buffer,
-            a_vertex_position,
-            u_projection,
-            // u_model_view,
-        }
+        Self { context, position_buffer, program, a_vertex_position, u_projection }
     }
 
     pub fn render(&self) {
@@ -220,7 +202,7 @@ impl SpritePass {
             matrix
         };
 
-        let model_view = {
+        let _model_view = {
             let mut matrix = Mat4::identity();
             matrix.translate(&Vec3::new(0.0, 0.0, -6.0));
             matrix
