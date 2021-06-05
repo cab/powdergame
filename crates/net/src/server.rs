@@ -34,11 +34,14 @@ enum ReliableEvent {
 }
 
 impl ReliableTransport {
-    pub fn new(listen_addr: SocketAddr) -> Self {
+    pub fn new(listen_addr: SocketAddr, events_tx: mpsc::Sender<ReliableEvent>) -> Self {
         let (outgoing_tx, outgoing_rx) = mpsc::channel(32);
 
         Self {
-            inner: Arc::new(RwLock::new(ReliableTransportInner::new(listen_addr))),
+            inner: Arc::new(RwLock::new(ReliableTransportInner::new(
+                listen_addr,
+                events_tx,
+            ))),
             outgoing_rx: Some(outgoing_rx),
             outgoing_tx,
         }
@@ -55,10 +58,6 @@ impl ReliableTransport {
 
     async fn outgoing(&self) -> mpsc::Sender<(ClientId, Vec<u8>)> {
         self.outgoing_tx.clone()
-    }
-
-    async fn events(&self) -> crossbeam_channel::Receiver<ReliableEvent> {
-        self.inner.read().await.events_rx.clone()
     }
 
     pub async fn listen(&mut self) {
@@ -166,6 +165,7 @@ async fn client_connected(ws: WebSocket, inner: Inner) {
             id: client_id,
             challenge: challenge.clone(),
         })
+        .await
         .unwrap();
 
     let sender = tokio::task::spawn(async move {
@@ -213,6 +213,7 @@ async fn client_connected(ws: WebSocket, inner: Inner) {
         .await
         .events_tx
         .send(ReliableEvent::ClientDisconnected { id: client_id })
+        .await
         .unwrap();
 }
 
@@ -223,14 +224,12 @@ struct ReliableTransportInner {
     connections: HashMap<ClientId, mpsc::UnboundedSender<Vec<u8>>>,
     incoming_tx: crossbeam_channel::Sender<(ClientId, Vec<u8>)>,
     incoming_rx: crossbeam_channel::Receiver<(ClientId, Vec<u8>)>,
-    events_tx: crossbeam_channel::Sender<ReliableEvent>,
-    events_rx: crossbeam_channel::Receiver<ReliableEvent>,
+    events_tx: mpsc::Sender<ReliableEvent>,
 }
 
 impl ReliableTransportInner {
-    fn new(listen_addr: SocketAddr) -> Self {
+    fn new(listen_addr: SocketAddr, events_tx: mpsc::Sender<ReliableEvent>) -> Self {
         let (incoming_tx, incoming_rx) = crossbeam_channel::unbounded();
-        let (events_tx, events_rx) = crossbeam_channel::unbounded();
         Self {
             next_client_id: 1,
             session_endpoint: None,
@@ -238,7 +237,6 @@ impl ReliableTransportInner {
             listen_addr,
             incoming_rx,
             incoming_tx,
-            events_rx,
             events_tx,
         }
     }
@@ -274,27 +272,21 @@ impl ReliableTransportInner {
 
 struct UnreliableTransport {
     rtc: RtcServer,
-    incoming_tx: crossbeam_channel::Sender<(SocketAddr, Vec<u8>)>,
-    incoming_rx: crossbeam_channel::Receiver<(SocketAddr, Vec<u8>)>,
+    incoming_tx: mpsc::Sender<(SocketAddr, Vec<u8>)>,
 }
 
 impl UnreliableTransport {
-    async fn new(listen_addr: SocketAddr, public_addr: SocketAddr) -> Self {
+    async fn new(
+        listen_addr: SocketAddr,
+        public_addr: SocketAddr,
+        incoming_tx: mpsc::Sender<(SocketAddr, Vec<u8>)>,
+    ) -> Self {
         let rtc = RtcServer::new(listen_addr, public_addr).await.unwrap();
-        let (incoming_tx, incoming_rx) = crossbeam_channel::unbounded();
-        Self {
-            rtc,
-            incoming_rx,
-            incoming_tx,
-        }
+        Self { rtc, incoming_tx }
     }
 
     pub fn session_endpoint(&self) -> SessionEndpoint {
         self.rtc.session_endpoint()
-    }
-
-    pub fn incoming(&self) -> crossbeam_channel::Receiver<(SocketAddr, Vec<u8>)> {
-        self.incoming_rx.clone()
     }
 
     async fn listen(&mut self) {
@@ -302,7 +294,7 @@ impl UnreliableTransport {
             if let Ok(recv) = self.rtc.recv().await {
                 let bytes = recv.message.as_ref().to_vec();
                 let addr = recv.remote_addr;
-                self.incoming_tx.send((addr, bytes)).unwrap();
+                self.incoming_tx.send((addr, bytes)).await.unwrap();
             }
         }
     }
@@ -320,14 +312,25 @@ pub struct Server<OutgoingPacket, IncomingPacket> {
     incoming_packet_type: PhantomData<IncomingPacket>,
     reliable_transport: Option<ReliableTransport>,
     unreliable_transport: Option<UnreliableTransport>,
+    events_rx: mpsc::Receiver<ReliableEvent>,
+    unreliable_incoming_rx: mpsc::Receiver<(SocketAddr, Vec<u8>)>,
 }
 
-impl<OutgoingPacket, IncomingPacket> Server<OutgoingPacket, IncomingPacket> {
+impl<OutgoingPacket, IncomingPacket> Server<OutgoingPacket, IncomingPacket>
+where
+    OutgoingPacket: Send + Sync,
+    IncomingPacket: Send + Sync,
+{
     pub async fn new(config: ServerConfig) -> Self {
-        let reliable_transport = ReliableTransport::new(config.http_listen_addr.clone());
+        let (events_tx, events_rx) = mpsc::channel(32);
+
+        let reliable_transport = ReliableTransport::new(config.http_listen_addr.clone(), events_tx);
+        let (incoming_tx, unreliable_incoming_rx) = mpsc::channel(32);
+
         let unreliable_transport = UnreliableTransport::new(
             config.webrtc_listen_addr.clone(),
             config.webrtc_public_addr.clone(),
+            incoming_tx,
         )
         .await;
         Self {
@@ -336,6 +339,8 @@ impl<OutgoingPacket, IncomingPacket> Server<OutgoingPacket, IncomingPacket> {
             incoming_packet_type: PhantomData,
             reliable_transport: Some(reliable_transport),
             unreliable_transport: Some(unreliable_transport),
+            events_rx,
+            unreliable_incoming_rx,
         }
     }
 
@@ -347,75 +352,60 @@ impl<OutgoingPacket, IncomingPacket> Server<OutgoingPacket, IncomingPacket> {
             .await;
         let reliable_rx = transport.incoming().await;
         let reliable_tx = transport.outgoing().await;
-        let reliable_events_rx = transport.events().await;
         let reliable = tokio::spawn(async move {
             transport.listen().await;
         });
-        let unreliable_rx = unreliable_transport.incoming();
         let unreliable = tokio::spawn(async move {
             unreliable_transport.listen().await;
         });
-        let process = tokio::spawn(async move {
+        {
             let mut processor = Processor::new();
             use bincode::Options;
             let bincoder = bincode::DefaultOptions::new()
                 .with_fixint_encoding()
                 .reject_trailing_bytes();
+
             loop {
-                for event in reliable_events_rx.try_iter() {
-                    debug!("got reliable event {:?}", event);
-                    match event {
-                        ReliableEvent::NewClient { id, challenge } => {
-                            processor.register_reliable_client(id, challenge);
-                        }
-                        ReliableEvent::ClientDisconnected { id } => {
-                            processor.unregister_client(&id);
+                tokio::select! {
+                    Some(event) = self.events_rx.recv() => {
+                        debug!("got reliable event {:?}", event);
+                        match event {
+                            ReliableEvent::NewClient { id, challenge } => {
+                                processor.register_reliable_client(id, challenge);
+                            }
+                            ReliableEvent::ClientDisconnected { id } => {
+                                processor.unregister_client(&id);
+                            }
                         }
                     }
-                }
-                for (client_id, packet) in reliable_rx.try_iter() {
-                    debug!("got reliable data {:?}", client_id);
-                }
-                for (addr, packet) in unreliable_rx.try_iter() {
-                    if let Some(client_id) = processor.client_id(&addr) {
-                    } else if let Some(ClientProtocolPacket::Connect { challenge }) =
-                        bincoder.deserialize::<ClientProtocolPacket>(&packet).ok()
-                    {
-                        debug!(
-                            ?challenge,
-                            ?addr,
-                            "got unreliable transport client connect packet",
-                        );
-                        if let Some(client_id) =
-                            processor.register_unreliable_client(&challenge, addr)
-                        {
+
+                    Some((addr, packet)) = self.unreliable_incoming_rx.recv() => {
+                        if let Some(client_id) = processor.client_id(&addr) {
+                        } else if let Some(ClientProtocolPacket::Connect { challenge }) = bincoder.deserialize::<ClientProtocolPacket>(&packet).ok() {
                             debug!(
-                                ?client_id,
-                                "associated unreliable connection to reliable connection"
+                                ?challenge,
+                                ?addr,
+                                "got unreliable transport client connect packet",
                             );
-                            reliable_tx
-                                .send((client_id, ServerProtocolPacket::Welcome.encode()))
-                                .await
-                                .unwrap();
-                        } else {
-                            // TODO
+                            if let Some(client_id) =
+                                processor.register_unreliable_client(&challenge, addr)
+                            {
+                                debug!(
+                                    ?client_id,
+                                    "associated unreliable connection to reliable connection"
+                                );
+                                reliable_tx
+                                    .send((client_id, ServerProtocolPacket::Welcome.encode()))
+                                    .await
+                                    .unwrap();
+                            } else {
+                                // TODO
+                            }
                         }
                     }
                 }
-                yield_now().await;
             }
-        });
-        tokio::select! {
-            _ = reliable => {
-                info!("reliable transport stopped");
-            }
-            _ = unreliable => {
-                info!("unreliable transport stopped");
-            }
-            _ = process => {
-                info!("processing stopped");
-            }
-        }
+        };
     }
 }
 

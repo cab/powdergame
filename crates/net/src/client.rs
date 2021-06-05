@@ -424,7 +424,6 @@ where
         self.unreliable_transport.send(&packet.encode());
     }
 
-
     fn send_reliable_protocol(&mut self, packet: ClientProtocolPacket) {
         self.reliable_buffer.add(ProtocolOrUser::Protocol(packet));
     }
