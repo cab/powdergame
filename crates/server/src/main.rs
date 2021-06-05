@@ -13,6 +13,7 @@ use crate::{
     world::WorldPlugin,
 };
 
+// #[tokio::main(flavor = "current_thread")]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     use tracing_subscriber::layer::SubscriberExt;

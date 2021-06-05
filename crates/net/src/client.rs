@@ -410,6 +410,9 @@ where
                     ServerProtocolPacket::ConnectChallenge { challenge, .. } => {
                         self.send_unreliable_protocol(ClientProtocolPacket::Connect { challenge })
                     }
+                    ServerProtocolPacket::Welcome => {
+                        debug!("welcomed");
+                    }
                 }
             }
         }

@@ -4,7 +4,10 @@ use std::{
 
 use futures::{FutureExt, SinkExt, StreamExt};
 use serde::{de::DeserializeOwned, Serialize};
-use tokio::sync::{mpsc, RwLock};
+use tokio::{
+    sync::{mpsc, RwLock},
+    task::yield_now,
+};
 use tracing::{debug, info, warn};
 use warp::{
     ws::{Message, WebSocket},
@@ -18,6 +21,8 @@ use crate::protocol::{
 
 struct ReliableTransport {
     inner: Inner,
+    outgoing_tx: mpsc::Sender<(ClientId, Vec<u8>)>,
+    outgoing_rx: Option<mpsc::Receiver<(ClientId, Vec<u8>)>>,
 }
 
 type Inner = Arc<RwLock<ReliableTransportInner>>;
@@ -25,12 +30,17 @@ type Inner = Arc<RwLock<ReliableTransportInner>>;
 #[derive(Debug)]
 enum ReliableEvent {
     NewClient { id: ClientId, challenge: String },
+    ClientDisconnected { id: ClientId },
 }
 
 impl ReliableTransport {
     pub fn new(listen_addr: SocketAddr) -> Self {
+        let (outgoing_tx, outgoing_rx) = mpsc::channel(32);
+
         Self {
             inner: Arc::new(RwLock::new(ReliableTransportInner::new(listen_addr))),
+            outgoing_rx: Some(outgoing_rx),
+            outgoing_tx,
         }
     }
 
@@ -43,8 +53,8 @@ impl ReliableTransport {
         self.inner.read().await.incoming_rx.clone()
     }
 
-    async fn outgoing(&self) -> crossbeam_channel::Sender<(ClientId, Vec<u8>)> {
-        self.inner.read().await.outgoing_tx.clone()
+    async fn outgoing(&self) -> mpsc::Sender<(ClientId, Vec<u8>)> {
+        self.outgoing_tx.clone()
     }
 
     async fn events(&self) -> crossbeam_channel::Receiver<ReliableEvent> {
@@ -111,11 +121,27 @@ impl ReliableTransport {
 
         let routes = connect.or(rtc);
 
-        tokio::spawn(async move { loop {} });
+        let mut outgoing = self.outgoing_rx.take().unwrap();
+        let inner = self.inner.clone();
+        let outgoing_sender = tokio::spawn(async move {
+            while let Some((client_id, message)) = outgoing.recv().await {
+                debug!("sending to {:?}", client_id);
+                inner.write().await.send(&client_id, message);
+            }
+        });
 
         let http_listen_addr = self.inner.read().await.listen_addr;
         debug!("listening for websockets on {:?}", http_listen_addr);
-        warp::serve(routes).run(http_listen_addr).await;
+        let http = warp::serve(routes).run(http_listen_addr);
+
+        tokio::select! {
+            _ = outgoing_sender => {
+                debug!("outgoing stopped");
+            }
+            _ = http => {
+                debug!("http stopped");
+            }
+        };
     }
 }
 
@@ -142,10 +168,12 @@ async fn client_connected(ws: WebSocket, inner: Inner) {
         })
         .unwrap();
 
-    tokio::task::spawn(async move {
-        for message in rx.recv().await {
+    let sender = tokio::task::spawn(async move {
+        while let Some(message) = rx.recv().await {
+            debug!(?client_id, "sending");
             user_ws_tx.send(Message::binary(message)).await.unwrap();
         }
+        debug!("ws send loop done");
     });
     tx.send(
         ServerProtocolPacket::ConnectChallenge {
@@ -173,6 +201,19 @@ async fn client_connected(ws: WebSocket, inner: Inner) {
     }
 
     debug!("client disconnected");
+
+    sender.abort();
+
+    sender.await;
+
+    inner.write().await.unregister(&client_id);
+
+    inner
+        .read()
+        .await
+        .events_tx
+        .send(ReliableEvent::ClientDisconnected { id: client_id })
+        .unwrap();
 }
 
 struct ReliableTransportInner {
@@ -182,8 +223,6 @@ struct ReliableTransportInner {
     connections: HashMap<ClientId, mpsc::UnboundedSender<Vec<u8>>>,
     incoming_tx: crossbeam_channel::Sender<(ClientId, Vec<u8>)>,
     incoming_rx: crossbeam_channel::Receiver<(ClientId, Vec<u8>)>,
-    outgoing_tx: crossbeam_channel::Sender<(ClientId, Vec<u8>)>,
-    outgoing_rx: crossbeam_channel::Receiver<(ClientId, Vec<u8>)>,
     events_tx: crossbeam_channel::Sender<ReliableEvent>,
     events_rx: crossbeam_channel::Receiver<ReliableEvent>,
 }
@@ -191,7 +230,6 @@ struct ReliableTransportInner {
 impl ReliableTransportInner {
     fn new(listen_addr: SocketAddr) -> Self {
         let (incoming_tx, incoming_rx) = crossbeam_channel::unbounded();
-        let (outgoing_tx, outgoing_rx) = crossbeam_channel::unbounded();
         let (events_tx, events_rx) = crossbeam_channel::unbounded();
         Self {
             next_client_id: 1,
@@ -202,8 +240,6 @@ impl ReliableTransportInner {
             incoming_tx,
             events_rx,
             events_tx,
-            outgoing_rx,
-            outgoing_tx,
         }
     }
 
@@ -211,10 +247,22 @@ impl ReliableTransportInner {
         self.session_endpoint = Some(endpoint);
     }
 
+    pub fn send(&mut self, client_id: &ClientId, message: Vec<u8>) {
+        if let Some(tx) = self.connections.get(client_id) {
+            debug!("sending to {:?}: {:?}", client_id, self.connections.keys());
+            tx.send(message).unwrap();
+        }
+    }
+
     pub fn register_client(&mut self, tx: mpsc::UnboundedSender<Vec<u8>>) -> ClientId {
         let id = self.next_client_id();
         self.connections.insert(id, tx);
         id
+    }
+
+    fn unregister(&mut self, client_id: &ClientId) {
+        debug!("unregistering {:?}", client_id);
+        self.connections.remove(client_id);
     }
 
     fn next_client_id(&mut self) -> ClientId {
@@ -232,7 +280,7 @@ struct UnreliableTransport {
 
 impl UnreliableTransport {
     async fn new(listen_addr: SocketAddr, public_addr: SocketAddr) -> Self {
-        let mut rtc = RtcServer::new(listen_addr, public_addr).await.unwrap();
+        let rtc = RtcServer::new(listen_addr, public_addr).await.unwrap();
         let (incoming_tx, incoming_rx) = crossbeam_channel::unbounded();
         Self {
             rtc,
@@ -320,6 +368,9 @@ impl<OutgoingPacket, IncomingPacket> Server<OutgoingPacket, IncomingPacket> {
                         ReliableEvent::NewClient { id, challenge } => {
                             processor.register_reliable_client(id, challenge);
                         }
+                        ReliableEvent::ClientDisconnected { id } => {
+                            processor.unregister_client(&id);
+                        }
                     }
                 }
                 for (client_id, packet) in reliable_rx.try_iter() {
@@ -342,11 +393,16 @@ impl<OutgoingPacket, IncomingPacket> Server<OutgoingPacket, IncomingPacket> {
                                 ?client_id,
                                 "associated unreliable connection to reliable connection"
                             );
+                            reliable_tx
+                                .send((client_id, ServerProtocolPacket::Welcome.encode()))
+                                .await
+                                .unwrap();
                         } else {
                             // TODO
                         }
                     }
                 }
+                yield_now().await;
             }
         });
         tokio::select! {
@@ -394,4 +450,6 @@ impl Processor {
     fn register_reliable_client(&mut self, client_id: ClientId, challenge: String) {
         self.challenge_to_client.insert(challenge, client_id);
     }
+
+    fn unregister_client(&mut self, client_id: &ClientId) {}
 }

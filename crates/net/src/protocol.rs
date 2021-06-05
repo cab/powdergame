@@ -23,6 +23,7 @@ pub enum ServerProtocolPacket {
         challenge: String,
         marker: ProtocolMarker,
     },
+    Welcome,
 }
 
 impl ServerProtocolPacket {
