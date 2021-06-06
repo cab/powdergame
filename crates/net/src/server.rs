@@ -4,6 +4,7 @@ use futures::{FutureExt, SinkExt, StreamExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, warn};
+use uuid::Uuid;
 use warp::{
     ws::{Message, WebSocket},
     Filter,
@@ -151,7 +152,7 @@ async fn client_connected(ws: WebSocket, inner: Inner) {
 
     let client_id = inner.write().await.register_client(tx.clone());
     debug!("client connected: {:?}", client_id);
-    let challenge = "challenge_1".to_string();
+    let challenge = format!("{}", Uuid::new_v4());
     inner
         .read()
         .await
@@ -170,11 +171,6 @@ async fn client_connected(ws: WebSocket, inner: Inner) {
         }
         debug!("ws send loop done");
     });
-    tx.send(
-        ServerProtocolPacket::from(ServerProtocolPacketInner::ConnectChallenge { challenge })
-            .encode(),
-    )
-    .unwrap();
 
     while let Some(result) = user_ws_rx.next().await {
         let packet = match result {
@@ -407,13 +403,13 @@ where
             loop {
                 tokio::select! {
                     Some(broadcast) = self.server_broadcast_rx.recv() => {
-                        processor.broadcast(broadcast);
+                        processor.broadcast(broadcast).await;
                     }
                     Some(event) = self.events_rx.recv() => {
                         debug!("got reliable event {:?}", event);
                         match event {
                             ReliableEvent::NewClient { id, challenge } => {
-                                processor.register_reliable_client(id, challenge);
+                                processor.register_reliable_client(id, challenge).await;
                             }
                             ReliableEvent::ClientDisconnected { id } => {
                                 processor.unregister_client(&id);
@@ -509,6 +505,7 @@ where
                             .unwrap();
                     } else {
                         // TODO
+                        panic!("no known client for challenge");
                     }
                 }
                 ClientProtocolPacket::Ack { id } => {
@@ -539,8 +536,19 @@ where
         Some(*client_id)
     }
 
-    fn register_reliable_client(&mut self, client_id: ClientId, challenge: String) {
-        self.challenge_to_client.insert(challenge, client_id);
+    async fn register_reliable_client(&mut self, client_id: ClientId, challenge: String) {
+        self.challenge_to_client
+            .insert(challenge.clone(), client_id);
+        self.reliable_tx
+            .send((
+                client_id,
+                ServerProtocolPacket::from(ServerProtocolPacketInner::ConnectChallenge {
+                    challenge,
+                })
+                .encode(),
+            ))
+            .await
+            .unwrap();
     }
 
     fn unregister_client(&mut self, _client_id: &ClientId) {}

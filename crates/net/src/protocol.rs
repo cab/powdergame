@@ -25,14 +25,12 @@ use tracing::debug;
 // used to avoid having the same bytes as a user packet
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProtocolMarker {
-    version: String,
+    version: u16,
 }
 
 impl ProtocolMarker {
     pub(crate) fn new() -> Self {
-        Self {
-            version: "v1".to_string(),
-        }
+        Self { version: 0 }
     }
 }
 

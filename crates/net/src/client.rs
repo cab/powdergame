@@ -111,7 +111,6 @@ mod wasm {
                 move |event| {
                     let event = event.unchecked_ref::<MessageEvent>();
                     let data = Uint8Array::new(&event.data()).to_vec();
-                    debug!("got message");
                     incoming_tx.send(data);
                 }
             });

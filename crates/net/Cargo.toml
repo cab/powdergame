@@ -47,3 +47,4 @@ web-sys = { version = "^0.3", features = [
 tokio = { version = "^1.0", features = ["full"] }
 warp = "^0.3"
 webrtc-unreliable = "0.5.1"
+uuid = { version = "0.8", features = ["v4"] }

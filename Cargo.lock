@@ -1002,6 +1002,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "uuid",
  "warp",
  "wasm-bindgen",
  "wasm-bindgen-futures",
