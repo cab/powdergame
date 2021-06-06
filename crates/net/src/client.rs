@@ -7,7 +7,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use tracing::{debug, warn};
 
 use crate::protocol::{
-    BufferResult, ClientProtocolPacket, ReliableBuffer, ServerProtocolPacket,
+    AckId, BufferResult, ClientProtocolPacket, ReliableBuffer, ServerProtocolPacket,
     ServerProtocolPacketInner,
 };
 
@@ -194,16 +194,21 @@ mod wasm {
                     ready_tx.send(());
                 }
             });
+
+            let (incoming_tx, incoming_rx) = crossbeam_channel::unbounded();
+
             let on_message = EventListener::new(&channel, "message", {
-                move |e| {
-                    trace!("got message");
+                let incoming_tx = incoming_tx.clone();
+                move |event| {
+                    let event = event.unchecked_ref::<MessageEvent>();
+                    let data = Uint8Array::new(&event.data()).to_vec();
+                    incoming_tx.send(data).unwrap();
                 }
             });
             let on_ice_candidate = EventListener::new(&peer, "icecandidate", move |e| {
                 trace!("ice candidate event");
             });
 
-            let (incoming_tx, incoming_rx) = crossbeam_channel::unbounded();
             Self {
                 ready_rx: Some(ready_rx),
                 peer,
@@ -219,8 +224,13 @@ mod wasm {
             }
         }
 
-        pub fn send(&self, data: &[u8]) {
+        pub fn incoming(&self) -> impl Iterator<Item = Vec<u8>> + '_ {
+            self.incoming_rx.try_iter()
+        }
+
+        pub fn send(&self, data: &[u8]) -> bool {
             self.channel.send_with_u8_array(data).unwrap();
+            true
         }
 
         pub async fn connect(&mut self, addr: SocketAddr) -> Result<()> {
@@ -296,9 +306,14 @@ mod native {
         pub fn new() -> Self {
             unimplemented!()
         }
-        pub fn send(&self, _data: &[u8]) {
+        pub fn send(&self, _data: &[u8]) -> bool {
             unimplemented!()
         }
+        pub fn incoming(&self) -> impl Iterator<Item = Vec<u8>> + '_ {
+            unimplemented!();
+            vec![].into_iter()
+        }
+
         pub async fn connect(&mut self, _addr: SocketAddr) -> Result<()> {
             unimplemented!()
         }
@@ -340,7 +355,7 @@ pub struct Client<OutgoingPacket, IncomingPacket> {
 
 impl<OutgoingPacket, IncomingPacket> Client<OutgoingPacket, IncomingPacket>
 where
-    OutgoingPacket: std::fmt::Debug + Serialize + Send + Sync + 'static,
+    OutgoingPacket: std::fmt::Debug + Clone + Serialize + Send + Sync + 'static,
     IncomingPacket: std::fmt::Debug + DeserializeOwned + Send + Sync + 'static,
 {
     pub fn new() -> Self {
@@ -379,7 +394,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ProtocolOrUser<T> {
     Protocol(ClientProtocolPacket),
     User(T),
@@ -395,6 +410,13 @@ where
             ProtocolOrUser::User(packet) => bincode::serialize(packet).unwrap(),
         }
     }
+
+    fn as_ack_request(&self, ack_id: AckId) -> ProtocolOrUser<T> {
+        ProtocolOrUser::Protocol(ClientProtocolPacket::AckRequest {
+            packet: self.encode(),
+            id: ack_id,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -404,17 +426,19 @@ struct ClientInner<OutgoingPacket, IncomingPacket> {
     unreliable_transport: UnreliableTransport,
     incoming_tx: crossbeam_channel::Sender<IncomingPacket>,
     incoming_rx: crossbeam_channel::Receiver<IncomingPacket>,
+    can_use_unreliable: bool,
 }
 
 impl<OutgoingPacket, IncomingPacket> ClientInner<OutgoingPacket, IncomingPacket>
 where
-    OutgoingPacket: std::fmt::Debug + Serialize + Send + Sync + 'static,
+    OutgoingPacket: std::fmt::Debug + Clone + Serialize + Send + Sync + 'static,
     IncomingPacket: std::fmt::Debug + DeserializeOwned + Send + Sync + 'static,
 {
     pub fn new() -> Self {
         let (incoming_tx, incoming_rx) = crossbeam_channel::unbounded();
 
         Self {
+            can_use_unreliable: false,
             reliable_transport: ReliableTransport::new(),
             unreliable_transport: UnreliableTransport::new(),
             reliable_buffer: ReliableBuffer::new(),
@@ -425,44 +449,65 @@ where
 
     pub async fn connect(&mut self, addr: SocketAddr) -> Result<()> {
         self.reliable_transport.connect(addr).await;
-        self.unreliable_transport.connect(addr).await;
+        self.unreliable_transport.connect(addr).await.unwrap();
         Ok(())
     }
 
     fn process(&mut self) {
-        let transport = &mut self.reliable_transport;
-        self.reliable_buffer.process(move |packet| {
+        let transport = &mut self.unreliable_transport;
+        self.reliable_buffer.process(move |packet, ack_id| {
             debug!("processing reliable buffer: {:?}", packet);
-            if transport.send(&packet.encode()) {
-                BufferResult::Sent
+            if transport.send(&packet.as_ack_request(ack_id).encode()) {
+                BufferResult::Attempted
             } else {
                 BufferResult::NotSent
             }
         });
 
         self.reliable_transport.process();
-        use bincode::Options;
-        let bincoder = bincode::DefaultOptions::new()
-            .with_fixint_encoding()
-            .reject_trailing_bytes();
-        let packets = self
+
+        let unreliable_packets = self
+            .unreliable_transport
+            .incoming()
+            .into_iter()
+            .collect::<Vec<_>>();
+        for packet in unreliable_packets {
+            self.process_packet(packet);
+        }
+
+        let reliable_packets = self
             .reliable_transport
             .incoming()
             .into_iter()
             .collect::<Vec<_>>();
-        for packet in packets {
-            if let Ok(packet) = bincoder.deserialize::<IncomingPacket>(&packet) {
-                debug!("got this: {:?}", packet);
-            } else if let Ok(packet) = bincoder.deserialize::<ServerProtocolPacket>(&packet) {
-                debug!("got server protocol packet: {:?}", packet);
-                let packet = packet.into();
-                match packet {
-                    ServerProtocolPacketInner::ConnectChallenge { challenge } => {
-                        self.send_unreliable_protocol(ClientProtocolPacket::Connect { challenge })
-                    }
-                    ServerProtocolPacketInner::Welcome {} => {
-                        debug!("welcomed");
-                    }
+        for packet in reliable_packets {
+            self.process_packet(packet);
+        }
+    }
+
+    fn process_packet(&mut self, packet: Vec<u8>) {
+        use bincode::Options;
+        let bincoder = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .reject_trailing_bytes();
+        if let Ok(packet) = bincoder.deserialize::<IncomingPacket>(&packet) {
+            debug!("got this: {:?}", packet);
+        } else if let Ok(packet) = bincoder.deserialize::<ServerProtocolPacket>(&packet) {
+            debug!("got server protocol packet: {:?}", packet);
+            let packet = packet.into();
+            match packet {
+                ServerProtocolPacketInner::ConnectChallenge { challenge } => self
+                    .send_unreliable_protocol_with_ack(ClientProtocolPacket::Connect { challenge }),
+                ServerProtocolPacketInner::AckRequest { packet, id } => {
+                    self.process_packet(packet);
+                    self.send_reliable_protocol(ClientProtocolPacket::Ack { id });
+                }
+                ServerProtocolPacketInner::Ack { id } => {
+                    self.reliable_buffer.ack(&id);
+                }
+                ServerProtocolPacketInner::Welcome {} => {
+                    debug!("welcomed. unreliable transport enabled.");
+                    self.can_use_unreliable = true;
                 }
             }
         }
@@ -474,8 +519,12 @@ where
         self.unreliable_transport.send(&packet.encode());
     }
 
-    fn send_reliable_protocol(&mut self, packet: ClientProtocolPacket) {
+    fn send_unreliable_protocol_with_ack(&mut self, packet: ClientProtocolPacket) {
         self.reliable_buffer.add(ProtocolOrUser::Protocol(packet));
+    }
+
+    fn send_reliable_protocol(&mut self, packet: ClientProtocolPacket) {
+        self.reliable_transport.send(&packet.encode());
     }
 
     fn send_reliable_user(&mut self, packet: OutgoingPacket) {

@@ -1,4 +1,26 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
+use tracing::debug;
+
+// #[derive(Debug, Clone, Deserialize, Serialize)]
+// pub(crate) struct AckMessage<T> {
+//     message: T,
+// }
+
+// impl<T> AckMessage<T> {
+//     pub fn new(message: T) -> Self {
+//         Self { message }
+//     }
+
+//     pub fn decode(bytes: &[u8]) -> Option<Self> {
+//         bincode::deserialize(bytes).ok()
+//     }
+
+//     pub fn encode(&self) -> Vec<u8> {
+//         bincode::serialize(self).unwrap()
+//     }
+// }
 
 // used to avoid having the same bytes as a user packet
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -39,9 +61,17 @@ impl From<ServerProtocolPacket> for ServerProtocolPacketInner {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub enum ServerProtocolPacketInner {
+pub(crate) enum ServerProtocolPacketInner {
+    AckRequest { packet: Vec<u8>, id: AckId },
+    Ack { id: AckId },
     ConnectChallenge { challenge: String },
     Welcome {},
+}
+
+impl ServerProtocolPacketInner {
+    pub(crate) fn into_packet(self) -> ServerProtocolPacket {
+        ServerProtocolPacket::from(self)
+    }
 }
 
 impl From<ServerProtocolPacketInner> for ServerProtocolPacket {
@@ -55,7 +85,9 @@ impl From<ServerProtocolPacketInner> for ServerProtocolPacket {
 
 // client -> server
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub enum ClientProtocolPacket {
+pub(crate) enum ClientProtocolPacket {
+    AckRequest { packet: Vec<u8>, id: AckId },
+    Ack { id: AckId },
     Connect { challenge: String },
 }
 
@@ -69,10 +101,13 @@ impl ClientProtocolPacket {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct ReliableBuffer<T> {
-    pending: Vec<T>,
-    sent: Vec<Sent<T>>,
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Hash, PartialEq, Eq)]
+pub(crate) struct AckId(u32);
+
+impl AckId {
+    fn new(id: u32) -> Self {
+        Self(id)
+    }
 }
 
 #[derive(Debug)]
@@ -83,31 +118,65 @@ struct Sent<T> {
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) enum BufferResult {
-    ProbablySent,
+    Attempted,
     Sent,
     NotSent,
 }
 
-impl<T> ReliableBuffer<T> {
+#[derive(Debug)]
+pub(crate) struct ReliableBuffer<T> {
+    pending: Vec<(AckId, T)>,
+    sent: HashMap<AckId, Sent<T>>,
+    next_ack_id: u32,
+}
+
+impl<T> ReliableBuffer<T>
+where
+    T: Clone,
+{
     pub fn new() -> Self {
         Self {
             pending: Vec::new(),
-            sent: Vec::new(),
+            sent: HashMap::new(),
+            next_ack_id: 0,
         }
     }
 
-    pub fn process(&mut self, mut f: impl FnMut(&T) -> BufferResult) {
+    fn next_ack_id(&mut self) -> AckId {
+        let id = self.next_ack_id;
+        self.next_ack_id += 1;
+        AckId::new(id)
+    }
+
+    pub fn ack(&mut self, id: &AckId) {
+        self.sent.remove(id);
+        debug!("{:?} was acked", id);
+    }
+
+    pub fn process(&mut self, mut f: impl FnMut(&T, AckId) -> BufferResult) {
         let mut not_sent = Vec::new();
-        for value in self.pending.drain(..) {
-            let sent = f(&value);
+        let now = instant::Instant::now();
+        let max_delta = std::time::Duration::from_millis(300);
+
+        for (ack_id, sent) in &self.sent {
+            if now - sent.sent_at >= max_delta {
+                debug!("sending {:?} again", ack_id);
+                self.pending.push((*ack_id, sent.value.clone()));
+            }
+        }
+
+        let pending = self.pending.drain(..).collect::<Vec<_>>();
+        for (ack_id, value) in pending {
+            debug!("sending {:?}", ack_id);
+            let sent = f(&value, ack_id);
             match sent {
                 BufferResult::NotSent => {
-                    not_sent.push(value);
+                    not_sent.push((ack_id, value));
                 }
-                BufferResult::ProbablySent => {
+                BufferResult::Attempted => {
                     // we'll need to verify with the server that this was sent
                     let sent_at = instant::Instant::now();
-                    self.sent.push(Sent { value, sent_at })
+                    self.sent.insert(ack_id, Sent { value, sent_at });
                 }
                 BufferResult::Sent => {
                     // no need to verify (e.g. TCP was used)
@@ -118,7 +187,8 @@ impl<T> ReliableBuffer<T> {
     }
 
     pub fn add(&mut self, packet: T) {
-        self.pending.push(packet);
+        let ack_id = self.next_ack_id();
+        self.pending.push((ack_id, packet));
     }
 }
 

@@ -1,7 +1,8 @@
 use std::{collections::HashMap, marker::PhantomData, net::SocketAddr, sync::Arc};
 
 use futures::{FutureExt, SinkExt, StreamExt};
-use tokio::sync::{mpsc, RwLock};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, warn};
 use warp::{
     ws::{Message, WebSocket},
@@ -263,7 +264,9 @@ impl ReliableTransportInner {
 
 struct UnreliableTransport {
     rtc: RtcServer,
+    session_endpoint: SessionEndpoint,
     incoming_tx: mpsc::Sender<(SocketAddr, Vec<u8>)>,
+    outgoing_rx: mpsc::Receiver<(SocketAddr, Vec<u8>)>,
 }
 
 impl UnreliableTransport {
@@ -271,21 +274,52 @@ impl UnreliableTransport {
         listen_addr: SocketAddr,
         public_addr: SocketAddr,
         incoming_tx: mpsc::Sender<(SocketAddr, Vec<u8>)>,
+        outgoing_rx: mpsc::Receiver<(SocketAddr, Vec<u8>)>,
     ) -> Self {
         let rtc = RtcServer::new(listen_addr, public_addr).await.unwrap();
-        Self { rtc, incoming_tx }
+        let session_endpoint = rtc.session_endpoint();
+        // let rtc = Arc::new(RwLock::new(rtc));
+        Self {
+            rtc,
+            session_endpoint,
+            incoming_tx,
+            outgoing_rx,
+        }
     }
 
     pub fn session_endpoint(&self) -> SessionEndpoint {
-        self.rtc.session_endpoint()
+        self.session_endpoint.clone()
     }
 
     async fn listen(&mut self) {
+        enum Next {
+            Recv(SocketAddr, Vec<u8>),
+            Send(SocketAddr, Vec<u8>),
+        }
         loop {
-            if let Ok(recv) = self.rtc.recv().await {
-                let bytes = recv.message.as_ref().to_vec();
-                let addr = recv.remote_addr;
-                self.incoming_tx.send((addr, bytes)).await.unwrap();
+            let next = tokio::select! {
+                Ok(recv) = self.rtc.recv() => {
+                    let bytes = recv.message.as_ref().to_vec();
+                    let addr = recv.remote_addr;
+                    Next::Recv(addr, bytes)
+                    // self.incoming_tx.send((addr, bytes)).await.unwrap();
+                },
+                Some((addr, data)) = self.outgoing_rx.recv() => {
+                    debug!("sending via rtc to {:?}", addr);
+                    Next::Send(addr, data)
+                }
+            };
+
+            match next {
+                Next::Recv(addr, data) => {
+                    self.incoming_tx.send((addr, data)).await.unwrap();
+                }
+                Next::Send(addr, data) => {
+                    self.rtc
+                        .send(&data, webrtc_unreliable::MessageType::Binary, &addr)
+                        .await
+                        .unwrap();
+                }
             }
         }
     }
@@ -305,6 +339,7 @@ pub struct Server<OutgoingPacket, IncomingPacket> {
     unreliable_transport: Option<UnreliableTransport>,
     events_rx: mpsc::Receiver<ReliableEvent>,
     unreliable_incoming_rx: mpsc::Receiver<(SocketAddr, Vec<u8>)>,
+    unreliable_outgoing_tx: mpsc::Sender<(SocketAddr, Vec<u8>)>,
     server_broadcast_rx: mpsc::UnboundedReceiver<OutgoingPacket>,
     server_rx: mpsc::UnboundedReceiver<(ClientId, OutgoingPacket)>,
     server_tx: mpsc::UnboundedSender<(ClientId, IncomingPacket)>,
@@ -312,8 +347,8 @@ pub struct Server<OutgoingPacket, IncomingPacket> {
 
 impl<OutgoingPacket, IncomingPacket> Server<OutgoingPacket, IncomingPacket>
 where
-    OutgoingPacket: Send + Sync,
-    IncomingPacket: Send + Sync,
+    OutgoingPacket: Send + Sync + Serialize,
+    IncomingPacket: Send + Sync + DeserializeOwned,
 {
     pub async fn new(
         config: ServerConfig,
@@ -325,11 +360,13 @@ where
 
         let reliable_transport = ReliableTransport::new(config.http_listen_addr, events_tx);
         let (incoming_tx, unreliable_incoming_rx) = mpsc::channel(32);
+        let (unreliable_outgoing_tx, unreliable_outgoing_rx) = mpsc::channel(32);
 
         let unreliable_transport = UnreliableTransport::new(
             config.webrtc_listen_addr,
             config.webrtc_public_addr,
             incoming_tx,
+            unreliable_outgoing_rx,
         )
         .await;
         Self {
@@ -340,6 +377,7 @@ where
             unreliable_transport: Some(unreliable_transport),
             events_rx,
             unreliable_incoming_rx,
+            unreliable_outgoing_tx,
             server_broadcast_rx,
             server_rx,
             server_tx,
@@ -348,27 +386,29 @@ where
 
     pub async fn listen(&mut self) {
         let mut unreliable_transport = self.unreliable_transport.take().unwrap();
-        let mut transport = self.reliable_transport.take().unwrap();
-        transport
+        let mut reliable_transport = self.reliable_transport.take().unwrap();
+        reliable_transport
             .set_session_endpoint(unreliable_transport.session_endpoint())
             .await;
-        let _reliable_rx = transport.incoming().await;
-        let reliable_tx = transport.outgoing().await;
+        let _reliable_rx = reliable_transport.incoming().await;
+        let reliable_tx = reliable_transport.outgoing().await;
         let _reliable = tokio::spawn(async move {
-            transport.listen().await;
+            reliable_transport.listen().await;
         });
         let _unreliable = tokio::spawn(async move {
             unreliable_transport.listen().await;
         });
         {
-            let mut processor = Processor::new();
-            use bincode::Options;
-            let bincoder = bincode::DefaultOptions::new()
-                .with_fixint_encoding()
-                .reject_trailing_bytes();
+            let mut processor = Processor::<OutgoingPacket, IncomingPacket>::new(
+                reliable_tx,
+                self.unreliable_outgoing_tx.clone(),
+            );
 
             loop {
                 tokio::select! {
+                    Some(broadcast) = self.server_broadcast_rx.recv() => {
+                        processor.broadcast(broadcast);
+                    }
                     Some(event) = self.events_rx.recv() => {
                         debug!("got reliable event {:?}", event);
                         match event {
@@ -382,28 +422,7 @@ where
                     }
 
                     Some((addr, packet)) = self.unreliable_incoming_rx.recv() => {
-                        if let Some(_client_id) = processor.client_id(&addr) {
-                        } else if let Ok(ClientProtocolPacket::Connect { challenge }) = bincoder.deserialize::<ClientProtocolPacket>(&packet) {
-                            debug!(
-                                ?challenge,
-                                ?addr,
-                                "got unreliable transport client connect packet",
-                            );
-                            if let Some(client_id) =
-                                processor.register_unreliable_client(&challenge, addr)
-                            {
-                                debug!(
-                                    ?client_id,
-                                    "associated unreliable connection to reliable connection"
-                                );
-                                reliable_tx
-                                    .send((client_id, ServerProtocolPacket::from(ServerProtocolPacketInner::Welcome{}).encode()))
-                                    .await
-                                    .unwrap();
-                            } else {
-                                // TODO
-                            }
-                        }
+                        processor.process_packet(addr, packet).await;
                     }
                 }
             }
@@ -412,21 +431,102 @@ where
 }
 
 #[derive(Debug)]
-struct Processor {
+struct Processor<OutgoingPacket, IncomingPacket> {
+    incoming_type: std::marker::PhantomData<IncomingPacket>,
+    outgoing_type: std::marker::PhantomData<OutgoingPacket>,
     challenge_to_client: HashMap<String, ClientId>,
     addr_to_client: HashMap<SocketAddr, ClientId>,
+    reliable_tx: mpsc::Sender<(ClientId, Vec<u8>)>,
+    unreliable_tx: mpsc::Sender<(SocketAddr, Vec<u8>)>,
 }
 
-impl Processor {
-    fn new() -> Self {
+impl<OutgoingPacket, IncomingPacket> Processor<OutgoingPacket, IncomingPacket>
+where
+    IncomingPacket: Send + Sync + DeserializeOwned,
+    OutgoingPacket: Send + Sync + Serialize,
+{
+    fn new(
+        reliable_tx: mpsc::Sender<(ClientId, Vec<u8>)>,
+        unreliable_tx: mpsc::Sender<(SocketAddr, Vec<u8>)>,
+    ) -> Self {
         Self {
+            incoming_type: std::marker::PhantomData,
+            outgoing_type: std::marker::PhantomData,
             challenge_to_client: HashMap::new(),
             addr_to_client: HashMap::new(),
+            reliable_tx,
+            unreliable_tx,
         }
+    }
+
+    async fn broadcast(&self, packet: OutgoingPacket) {
+        use bincode::Options;
+        let bincoder = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .reject_trailing_bytes();
+        let encoded = bincoder.serialize(&packet).unwrap();
+        // for addr in self.addr_to_client.keys() {
+        //     self.unreliable_tx
+        //         .send((addr.clone(), encoded.clone()))
+        //         .await
+        //         .unwrap();
+        // }
     }
 
     fn client_id(&self, addr: &SocketAddr) -> Option<ClientId> {
         self.addr_to_client.get(addr).copied()
+    }
+
+    #[async_recursion::async_recursion]
+    async fn process_packet(&mut self, addr: SocketAddr, packet: Vec<u8>) {
+        use bincode::Options;
+        let bincoder = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .reject_trailing_bytes();
+
+        if let Ok(deserialized) = bincoder.deserialize::<IncomingPacket>(&packet) {
+            debug!("got user packet");
+        } else if let Ok(deserialized) = bincoder.deserialize::<ClientProtocolPacket>(&packet) {
+            match deserialized {
+                ClientProtocolPacket::Connect { challenge } => {
+                    debug!(
+                        ?challenge,
+                        ?addr,
+                        "got unreliable transport client connect packet",
+                    );
+                    if let Some(client_id) = self.register_unreliable_client(&challenge, addr) {
+                        debug!(
+                            ?client_id,
+                            "associated unreliable connection to reliable connection"
+                        );
+                        self.reliable_tx
+                            .send((
+                                client_id,
+                                ServerProtocolPacket::from(ServerProtocolPacketInner::Welcome {})
+                                    .encode(),
+                            ))
+                            .await
+                            .unwrap();
+                    } else {
+                        // TODO
+                    }
+                }
+                ClientProtocolPacket::Ack { id } => {
+                    debug!("got ack");
+                }
+                ClientProtocolPacket::AckRequest { packet, id } => {
+                    self.process_packet(addr, packet).await;
+                    debug!(?id, "sending ack");
+                    self.unreliable_tx
+                        .send((
+                            addr,
+                            ServerProtocolPacketInner::Ack { id }.into_packet().encode(),
+                        ))
+                        .await
+                        .unwrap();
+                }
+            }
+        }
     }
 
     fn register_unreliable_client(
