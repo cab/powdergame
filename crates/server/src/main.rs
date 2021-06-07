@@ -6,23 +6,22 @@ use clap::Arg;
 use game_common::{app::App, world::Tick, ClientPacket, ServerPacket};
 use gnet::protocol::ClientId;
 use tokio::{sync::mpsc, task::JoinHandle};
-use tracing::{debug, info, trace};
+use tracing::{debug, event, info, span, trace, Level};
 
 use crate::world::WorldPlugin;
 
 // #[tokio::main(flavor = "current_thread")]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    use tracing_subscriber::layer::SubscriberExt;
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer())
-            .with(
-                tracing_subscriber::EnvFilter::try_new("game_server=debug,gnet=debug")
-                    .expect("todo"),
-            ),
-    )
-    .unwrap();
+    // use tracing_subscriber::layer::SubscriberExt;
+    // tracing::subscriber::set_global_default(
+    //     tracing_subscriber::registry()
+    //         .with(tracing_subscriber::fmt::layer())
+    //         .with(tracing_subscriber::EnvFilter::try_new("debug").expect("todo")),
+    // )
+    // .unwrap();
+
+    tracing_subscriber::fmt::init();
 
     let matches = clap::App::new("echo_server")
         .arg(
@@ -134,7 +133,7 @@ where
             }
         }
         tokio::task::yield_now().await;
-        tokio::time::sleep(delta).await; // TODO keep this for dev?
+        // tokio::time::sleep(delta).await; // TODO keep this for dev?
     }
 }
 

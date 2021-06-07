@@ -49,6 +49,7 @@ impl Renderer {
         self.context.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT);
         self.pixel_pass.render();
         self.sprite_pass.render();
+     
     }
 }
 

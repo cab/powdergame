@@ -8,10 +8,11 @@ use serde::{Deserialize, Serialize};
 use world::Cell;
 
 // server -> client
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum ServerPacket {
     ConnectChallenge { challenge: String },
     SetCells { cells: Vec<Cell> },
+    UpdateCells { cells: Vec<Cell> },
 }
 
 impl ServerPacket {

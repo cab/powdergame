@@ -490,7 +490,7 @@ where
             .with_fixint_encoding()
             .reject_trailing_bytes();
         if let Ok(packet) = bincoder.deserialize::<IncomingPacket>(&packet) {
-            debug!("got this: {:?}", packet);
+            // debug!("got this: {:?}", packet);
         } else if let Ok(packet) = bincoder.deserialize::<ServerProtocolPacket>(&packet) {
             debug!("got server protocol packet: {:?}", packet);
             let packet = packet.into();

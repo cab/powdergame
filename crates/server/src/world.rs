@@ -5,7 +5,7 @@ use game_common::{
     ServerPacket,
 };
 use tokio::sync::mpsc;
-
+use tracing::{debug, warn};
 #[derive(Debug)]
 struct Cells {
     width: u32,
@@ -177,11 +177,9 @@ enum CellChange {
 }
 
 fn send_state(cells: Res<Cells>, broadcast: Res<mpsc::UnboundedSender<ServerPacket>>) {
-    broadcast
-        .send(ServerPacket::SetCells {
-            cells: cells.current().to_vec(),
-        })
-        .unwrap();
+    if let Err(_) = broadcast.send(ServerPacket::UpdateCells { cells: vec![] }) {
+        warn!("failed to send");
+    }
 }
 
 fn advance_cells(mut cells: ResMut<Cells>) {

@@ -3,7 +3,7 @@ use std::{collections::HashMap, marker::PhantomData, net::SocketAddr, sync::Arc}
 use futures::{FutureExt, SinkExt, StreamExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 use uuid::Uuid;
 use warp::{
     ws::{Message, WebSocket},
@@ -301,7 +301,7 @@ impl UnreliableTransport {
                     // self.incoming_tx.send((addr, bytes)).await.unwrap();
                 },
                 Some((addr, data)) = self.outgoing_rx.recv() => {
-                    debug!("sending via rtc to {:?}", addr);
+                    trace!("sending via rtc to {:?}", addr);
                     Next::Send(addr, data)
                 }
             };
@@ -311,10 +311,18 @@ impl UnreliableTransport {
                     self.incoming_tx.send((addr, data)).await.unwrap();
                 }
                 Next::Send(addr, data) => {
-                    self.rtc
+                    let size = data.len();
+                    // debug!("size: {:?}", size);
+                    if size > 1600 {
+                        panic!();
+                    }
+                    if let Err(e) = self
+                        .rtc
                         .send(&data, webrtc_unreliable::MessageType::Binary, &addr)
                         .await
-                        .unwrap();
+                    {
+                        warn!("failed to send to {:?}", addr);
+                    }
                 }
             }
         }
@@ -343,8 +351,8 @@ pub struct Server<OutgoingPacket, IncomingPacket> {
 
 impl<OutgoingPacket, IncomingPacket> Server<OutgoingPacket, IncomingPacket>
 where
-    OutgoingPacket: Send + Sync + Serialize,
-    IncomingPacket: Send + Sync + DeserializeOwned,
+    OutgoingPacket: std::fmt::Debug + Send + Sync + Serialize,
+    IncomingPacket: std::fmt::Debug + Send + Sync + DeserializeOwned,
 {
     pub async fn new(
         config: ServerConfig,
@@ -438,8 +446,8 @@ struct Processor<OutgoingPacket, IncomingPacket> {
 
 impl<OutgoingPacket, IncomingPacket> Processor<OutgoingPacket, IncomingPacket>
 where
-    IncomingPacket: Send + Sync + DeserializeOwned,
-    OutgoingPacket: Send + Sync + Serialize,
+    IncomingPacket: std::fmt::Debug + Send + Sync + DeserializeOwned,
+    OutgoingPacket: std::fmt::Debug + Send + Sync + Serialize,
 {
     fn new(
         reliable_tx: mpsc::Sender<(ClientId, Vec<u8>)>,
@@ -455,24 +463,26 @@ where
         }
     }
 
+    #[tracing::instrument(level = "debug", skip(self))]
     async fn broadcast(&self, packet: OutgoingPacket) {
         use bincode::Options;
         let bincoder = bincode::DefaultOptions::new()
             .with_fixint_encoding()
             .reject_trailing_bytes();
         let encoded = bincoder.serialize(&packet).unwrap();
-        // for addr in self.addr_to_client.keys() {
-        //     self.unreliable_tx
-        //         .send((addr.clone(), encoded.clone()))
-        //         .await
-        //         .unwrap();
-        // }
+        for addr in self.addr_to_client.keys() {
+            self.unreliable_tx
+                .send((addr.clone(), encoded.clone()))
+                .await
+                .unwrap();
+        }
     }
 
     fn client_id(&self, addr: &SocketAddr) -> Option<ClientId> {
         self.addr_to_client.get(addr).copied()
     }
 
+    #[tracing::instrument(level = "debug", skip(self, packet))]
     #[async_recursion::async_recursion]
     async fn process_packet(&mut self, addr: SocketAddr, packet: Vec<u8>) {
         use bincode::Options;
@@ -483,6 +493,7 @@ where
         if let Ok(deserialized) = bincoder.deserialize::<IncomingPacket>(&packet) {
             debug!("got user packet");
         } else if let Ok(deserialized) = bincoder.deserialize::<ClientProtocolPacket>(&packet) {
+            debug!(?deserialized);
             match deserialized {
                 ClientProtocolPacket::Connect { challenge } => {
                     debug!(
@@ -551,5 +562,8 @@ where
             .unwrap();
     }
 
-    fn unregister_client(&mut self, _client_id: &ClientId) {}
+    fn unregister_client(&mut self, client_id: &ClientId) {
+        self.addr_to_client.retain(|_, v| v != client_id);
+        self.challenge_to_client.retain(|_, v| v != client_id);
+    }
 }
